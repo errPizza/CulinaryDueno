@@ -1,0 +1,359 @@
+import { expect, test, type Page } from '@playwright/test';
+
+const seen = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+const live = { at: seen(1), openAccounts: 4, occupiedTables: 3, openAmount: 124050, pendingRequests: 0, cashOpen: true, lowStock: [{ ingredientId: 'i1', name: 'Tortilla de maíz', unit: 'pz', available: 40, min: 100 }] };
+const local = new Date(Date.now() - 4 * 3_600_000).toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
+const branch = (licenseId: string, name: string, minutes: number | null) => ({ licenseId, name, tier: 'pro', licenseStatus: 'active', lastSeenAt: minutes === null ? null : seen(minutes), stale: minutes === null || minutes > 15, timeZone: minutes === null ? null : 'America/Mexico_City', businessDate: minutes === null ? null : local, businessDayCutoffMinutes: minutes === null ? null : 240, lastZ: 12, appVersion: '0.3.3', live: minutes === null ? null : live });
+const centro = branch('c', 'Centro', 1), norte = branch('n', 'Polanco Norte con nombre largo', 90), nueva = branch('z', 'Coyoacán', null);
+const totals = (net: number, tickets: number) => ({ tickets, people: tickets * 2, gross: net, discounts: 0, net, tax: 0, deliveryFees: 0, voidedCount: 0, voidedAmount: 0, comps: 0, staffMeals: 0, averageTicket: tickets ? Math.trunc(net / tickets) : 0, averagePerson: tickets ? Math.trunc(net / (tickets * 2)) : 0 });
+const back = (days: number) => new Date(Date.parse(local) - days * 86_400_000).toISOString().slice(0, 10);
+const hours = [[13, 4, 182500], [14, 11, 512000], [15, 9, 421050], [19, 6, 267900], [1, 2, 66025]].map(([hour, tickets, net]) => ({ hour, tickets, net }));
+
+async function mock(page: Page, { branches = [centro, norte, nueva], signedIn = true }: { branches?: any[]; signedIn?: boolean } = {}) {
+
+    const calls: string[] = [];
+
+    await page.route('https://servidor.test/**', async route => {
+
+        const url = new URL(route.request().url());
+        const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
+
+        if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+
+        calls.push(url.pathname + url.search);
+
+        const reply = (json: unknown, status = 200) => route.fulfill({ status, headers: cors, json });
+
+        if (url.pathname === '/owner/v1/me') return reply({ account: { id: '1', email: 'dueno@ejemplo.mx', role: 'owner' }, branches });
+        if (url.pathname === '/owner/v1/login') return route.request().postDataJSON().totp === '123456' ? reply({ token: 't', expiresAt: seen(-600) }) : reply({ error: { code: 'unauthorized', message: 'Correo, contraseña o código inválidos' } }, 401);
+        if (url.pathname === '/owner/v1/logout') return reply({ ok: true });
+        if (url.pathname === '/owner/v1/enroll') return reply({ email: 'nuevo@ejemplo.mx', totp: { secret: 'JBSWY3DPEHPK3PXP', uri: 'otpauth://totp/x?secret=JBSWY3DPEHPK3PXP' } }, 201);
+        if (url.pathname === '/owner/v1/enroll/confirm') return reply({ email: 'nuevo@ejemplo.mx' });
+
+        const chosen = url.searchParams.get('branch');
+        const from = url.searchParams.get('from')!, to = url.searchParams.get('to')!;
+        // Like the server: Lite reads its month or its last seven days, and never enters a Pro figure.
+        const inScope = branches.filter(b => !chosen || b.licenseId === chosen);
+        const old = from < [back(6), local.slice(0, 8) + '01'].sort()[0]!;
+        const marks = { lite: inScope.filter(b => b.tier === 'lite').map(b => b.licenseId), outOfRange: inScope.filter(b => b.tier === 'lite' && old).map(b => b.licenseId) };
+        const rows = inScope.filter(b => !marks.outOfRange.includes(b.licenseId));
+        const figures = (b: any) => b.licenseId === 'z' ? totals(0, 0) : b.licenseId === 'n' ? totals(321075, 9) : totals(1449475, 32);
+        const net = rows.reduce((t, b) => t + figures(b).net, 0), tickets = rows.reduce((t, b) => t + figures(b).tickets, 0);
+
+        if (url.pathname === '/owner/v1/stats/products') return reply({ from, to, ...marks, products: [
+            { name: 'Tacos al pastor', category: 'Tacos', quantity: 120, revenue: 360000, cost: 120000, revenueWithoutCost: 0, estimatedMargin: 240000 },
+            { name: 'Agua de horchata de temporada con nombre muy largo', category: 'Bebidas', quantity: 40, revenue: 100000, cost: 0, revenueWithoutCost: 100000, estimatedMargin: 0 }
+        ] });
+        if (url.pathname === '/owner/v1/stats/cash') return reply({ from, to, ...marks, cash: { income: 50000, expense: 12000, withdrawal: 200000 }, inventory: { waste: 3500, shortage: 1200, surplus: 0 }, closes: [
+            { licenseId: 'c', businessDate: local, cashId: 'k1', closedAt: seen(30), blind: true, cashDifference: -5000, cardDifference: 0, transferDifference: 1000, adjustments: 0 }
+        ] });
+        if (url.pathname === '/owner/v1/stats/closings') return reply({ from, to, ...marks, closings: [
+            { licenseId: 'c', branchName: 'Centro', businessDate: local, number: 12, from: seen(600), to: seen(30), tickets: 33, net: 1500000, panelTickets: 32, panelNet: 1449475, reopenedTickets: 1, reopenedNet: 50525 }
+        ] });
+        if (url.pathname === '/owner/v1/stats/staff') return reply({ from, to, ...marks, staff: [
+            { licenseId: 'c', branchName: 'Centro', staffId: 's1', name: 'Ana López', tickets: 20, net: 900000, tips: 50000 },
+            { licenseId: 'n', branchName: 'Polanco Norte con nombre largo', staffId: 's2', name: 'Beto', tickets: 0, net: 0, tips: 2000 }
+        ] });
+
+        return reply({ from, to, ...marks, totals: totals(net, tickets), partial: rows.filter(b => b.stale).map(b => b.licenseId), branches: rows.map(b => ({ ...b, ...figures(b), hasData: b.licenseId !== 'z', openDays: 0 })).sort((a, b) => Number(b.hasData) - Number(a.hasData) || b.net - a.net), days: tickets && from !== to ? [{ businessDate: to, tickets, net }] : [], hours: tickets ? hours : [], channels: tickets ? [{ channel: 'table', tickets: tickets - 5, net: net - 200000 }, { channel: 'delivery', tickets: 5, net: 200000 }] : [], payments: [{ method: 'card', amount: 1000000, tips: 50000, count: 20 }, { method: 'cash', amount: 770550, tips: 0, count: 21 }], refunds: [] });
+
+    });
+
+    if (signedIn) await page.addInitScript(expires => localStorage.setItem('culinary-dueno-session', JSON.stringify({ token: 't', expiresAt: expires })), seen(-600));
+
+    return calls;
+}
+
+test('consolidado con todas las sucursales, y aviso de la que va atrasada', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await expect(page.locator('.figure')).toHaveText('$17,705.50');
+    await expect(page.getByText('Cuentas', { exact: true }).first()).toBeVisible();
+    await expect(page.locator('.behind')).toHaveCount(2);
+    await expect(page.locator('.behind').first()).toContainText('Polanco Norte con nombre largo');
+    await expect(page.locator('.ranking li').first()).toContainText('$14,494.75');
+    await expect(page.locator('.ranking li').nth(2)).toContainText('Nunca se ha conectado');
+    await expect(page.locator('.ranking li').nth(1)).not.toContainText('abierta');
+    await expect(page.locator('.versus')).toContainText('Lo mismo que ayer');
+
+});
+
+test('una sucursal se elige en el selector o en la lista, y se vuelve a todas', async ({ page }) => {
+
+    const calls = await mock(page);
+
+    await page.goto('/');
+    await page.locator('.ranking button').first().click();
+    await expect(page.locator('.figure')).toHaveText('$14,494.75');
+    await expect(page.locator('.picker select')).toHaveValue('c');
+    expect(calls.at(-1)).toContain('branch=c');
+    await page.getByRole('button', { name: 'Ver todas las sucursales' }).click();
+    await expect(page.locator('.figure')).toHaveText('$17,705.50');
+
+});
+
+test('el periodo pide las fechas de negocio de la sucursal, no las del teléfono', async ({ page }) => {
+
+    const calls = await mock(page);
+
+    await page.goto('/');
+    await page.getByRole('button', { name: '7 días' }).click();
+    await expect(page.locator('h1')).toHaveText('Ventas de los últimos 7 días');
+    await expect.poll(() => calls.some(c => c.startsWith(`/owner/v1/stats/summary?from=${back(6)}&to=${local}`))).toBe(true);
+    await expect(page.getByText('Ahora mismo')).toHaveCount(0);
+
+});
+
+test('cada periodo se compara con su tramo anterior y los de varios días van por día', async ({ page }) => {
+
+    const calls = await mock(page);
+
+    await page.goto('/');
+    await page.getByRole('button', { name: '7 días' }).click();
+    await expect(page.locator('.versus')).toContainText('que los 7 días anteriores');
+    await expect.poll(() => calls).toContain(`/owner/v1/stats/summary?from=${back(13)}&to=${back(7)}`);
+    await expect(page.getByRole('heading', { name: 'Por día' })).toBeVisible();
+    await expect(page.locator('.hours-plot').first().locator('button')).toHaveCount(7);
+    await expect(page.getByRole('heading', { name: 'Horas pico' })).toBeVisible();
+    await page.getByRole('button', { name: 'Ayer' }).click();
+    await expect(page.locator('.versus')).toContainText('el mismo día de la semana pasada');
+    await expect.poll(() => calls).toContain(`/owner/v1/stats/summary?from=${back(8)}&to=${back(8)}`);
+    await expect(page.getByRole('heading', { name: 'Por canal' })).toBeVisible();
+    await expect(page.getByText('Domicilio')).toBeVisible();
+
+});
+
+test('el rango libre pide dos fechas válidas y explica el error', async ({ page }) => {
+
+    const calls = await mock(page);
+
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Fechas' }).click();
+    await expect.poll(() => calls).toContain(`/owner/v1/stats/summary?from=${back(29)}&to=${local}`);
+    await page.getByLabel('Desde').fill(local);
+    await page.getByLabel('Hasta').fill(back(3));
+    await expect(page.getByRole('alert')).toContainText('antes que la final');
+    await page.getByLabel('Desde').fill(back(10));
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect.poll(() => calls.some(c => c.startsWith(`/owner/v1/stats/summary?from=${back(10)}&to=${back(3)}`))).toBe(true);
+    await expect(page.locator('h1')).toContainText('Ventas del');
+
+});
+
+test('productos: margen sólo con receta, menos vendidos e inventario bajo', async ({ page }) => {
+
+    const calls = await mock(page);
+
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Productos' }).click();
+    await expect(page.locator('.figure')).toHaveText('$4,600.00');
+    await expect.poll(() => calls.some(c => c.startsWith('/owner/v1/stats/products?'))).toBe(true);
+    await expect(page.locator('.facts').first()).toContainText('$2,400.00');
+    await expect(page.locator('.facts').first()).toContainText('66.7 %');
+    await expect(page.getByText(/No incluye 1 producto sin receta, que suman \$1,000.00/)).toBeVisible();
+    await expect(page.getByText('Tortilla de maíz')).toBeVisible();
+    await expect(page.getByText(/quedan 40 pz, mínimo 100/)).toContainText('Centro');
+    await page.getByText('Ver los 2 productos').click();
+    await expect(page.locator('.all tbody tr')).toHaveCount(2);
+
+});
+
+test('caja: cobros por método, arqueo con faltante y corte Z con reapertura', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Caja' }).click();
+    await expect(page.locator('.figure')).toHaveText('$17,705.50');
+    await expect(page.getByText('Tarjeta', { exact: true }).first()).toBeVisible();
+    await expect(page.locator('.closes')).toContainText('Faltan $50.00');
+    await expect(page.locator('.closes')).toContainText('Sobran $10.00');
+    await expect(page.locator('.closes')).toContainText('Arqueo ciego');
+    await expect(page.getByText(/1 cuenta se reabrió después de este corte/)).toContainText('$14,494.75');
+
+});
+
+test('personal: ventas y propinas por mesero, con su sucursal en el consolidado', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Personal' }).click();
+    await expect(page.locator('.figure')).toHaveText('$9,000.00');
+    await expect(page.locator('.ranking').first()).toContainText('Centro · 20 cuentas · ticket $450.00');
+    await expect(page.locator('.ranking').first()).toContainText('sólo propinas');
+    await page.locator('.picker select').selectOption('c');
+    await expect(page.locator('.ranking').first()).not.toContainText('Centro ·');
+
+});
+
+const lite = (b: any) => ({ ...b, tier: 'lite' });
+
+test('con planes mixtos, cada cifra Pro dice qué sucursal Lite no incluye', async ({ page }) => {
+
+    await mock(page, { branches: [centro, lite(norte), nueva] });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Este mes' }).click();
+    await expect(page.locator('.versus')).toContainText('sin Polanco Norte con nombre largo');
+    await expect(page.locator('.versus')).toContainText('$14,494.75 contra $14,494.75');
+    await expect(page.getByText('Sólo sucursales Pro: no incluye Polanco Norte con nombre largo').first()).toBeVisible();
+    await page.getByRole('button', { name: 'Caja' }).click();
+    await expect(page.locator('.facts').first()).toContainText('$14,494.75');
+    await expect(page.getByText(/Sólo sucursales Pro/)).toBeVisible();
+
+});
+
+test('sólo con sucursales Lite, las áreas Pro lo dicen en vez de mostrar ceros', async ({ page }) => {
+
+    await mock(page, { branches: [lite(centro)] });
+    await page.goto('/');
+    await expect(page.locator('.figure')).toHaveText('$14,494.75');
+    await expect(page.getByRole('button', { name: 'Fechas' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Descuentos y cancelaciones' })).toHaveCount(0);
+    await page.getByRole('button', { name: '7 días' }).click();
+    await expect(page.getByText('Las horas pico de varios días son del plan Pro.')).toBeVisible();
+    await page.getByRole('button', { name: 'Productos' }).click();
+    await expect(page.getByText('Tacos al pastor').first()).toBeVisible();
+    await expect(page.getByText('Margen estimado')).toHaveCount(0);
+    await expect(page.getByText('El costo y el margen son del plan Pro.')).toBeVisible();
+    await page.getByRole('button', { name: 'Caja' }).click();
+    await expect(page.getByRole('heading', { name: 'Caja es del plan Pro' })).toBeVisible();
+    await page.getByRole('button', { name: 'Personal' }).click();
+    await expect(page.getByRole('heading', { name: 'Personal es del plan Pro' })).toBeVisible();
+
+});
+
+test('las horas siguen el orden del servicio y cada barra dice su cifra', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await page.getByRole('button', { name: /Ventas de hoy/ }).waitFor({ state: 'detached' }).catch(() => {});
+    const labels = await page.locator('.hours-plot button').evaluateAll(all => all.map(b => b.getAttribute('aria-label')!.slice(0, 5)));
+    expect(labels.indexOf('01:00')).toBeGreaterThan(labels.indexOf('19:00'));
+    await page.getByRole('button', { name: /^14:00/ }).hover();
+    await expect(page.locator('figcaption')).toContainText('$5,120.00');
+    await page.getByText('Ver como tabla').click();
+    await expect(page.locator('.hours tbody tr')).toHaveCount(5);
+
+});
+
+test('con una sola sucursal no estorban ni el selector ni el ranking', async ({ page }) => {
+
+    await mock(page, { branches: [centro] });
+    await page.goto('/');
+    await expect(page.locator('.figure')).toHaveText('$14,494.75');
+    await expect(page.locator('.picker')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: /^Sucursal/ })).toHaveCount(0);
+
+});
+
+test('sin sucursales ni ventas lo dice, y una caída de red conserva lo último', async ({ page }) => {
+
+    await mock(page, { branches: [] });
+    await page.goto('/');
+    await expect(page.getByText('Aún no hay sucursales en tu cuenta')).toBeVisible();
+
+});
+
+test('sin internet avisa y conserva la última cifra', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await expect(page.locator('.figure')).toHaveText('$17,705.50');
+    await page.route('https://servidor.test/**', route => route.abort());
+    await page.getByRole('button', { name: 'Actualizar' }).click();
+    await expect(page.getByRole('alert')).toContainText('Lo que ves es de la última actualización');
+    await expect(page.locator('.figure')).toHaveText('$17,705.50');
+
+});
+
+test('entra con código, recuerda la sesión, y cerrar sesión vuelve al acceso', async ({ page }) => {
+
+    await mock(page, { signedIn: false });
+    await page.goto('/');
+    await page.getByLabel('Correo').fill('dueno@ejemplo.mx');
+    await page.getByLabel('Contraseña').fill('una contraseña larga');
+    await page.getByLabel('Código del autenticador').fill('000000');
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await expect(page.getByRole('alert')).toContainText('inválidos');
+    await page.getByLabel('Código del autenticador').fill('123456');
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await expect(page.locator('.figure')).toBeVisible();
+    await page.reload();
+    await expect(page.locator('.figure')).toBeVisible();
+    await page.getByRole('button', { name: /Cerrar sesión/ }).click();
+    await expect(page.getByRole('button', { name: 'Entrar' })).toBeVisible();
+
+});
+
+test('el alta pide código y contraseña, muestra la clave y la confirma', async ({ page }) => {
+
+    await mock(page, { signedIn: false });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Tengo un código de alta' }).click();
+    await page.getByLabel('Código de alta').fill('ABCDE-FGHIJ-KLMNO-PQRST');
+    await page.getByLabel('Contraseña nueva').fill('una contraseña larga');
+    await page.getByRole('button', { name: 'Continuar' }).click();
+    await expect(page.getByText('JBSWY3DPEHPK3PXP')).toBeVisible();
+    await expect(page.getByAltText('Código QR de la clave')).toBeVisible();
+    await page.getByLabel('Código de 6 dígitos').fill('123456');
+    await page.getByRole('button', { name: 'Confirmar cuenta' }).click();
+    await expect(page.getByRole('button', { name: 'Entrar' })).toBeVisible();
+
+});
+
+for (const [name, width, height] of [['telefono', 360, 760], ['escritorio', 1280, 800]] as const) for (const colorScheme of ['light', 'dark'] as const) test(`sin desbordes a ${width} px en tema ${colorScheme}`, async ({ page }) => {
+
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+    await mock(page);
+    await page.goto('/');
+
+    for (const section of ['Resumen', 'Productos', 'Caja', 'Personal']) {
+
+        await page.getByRole('button', { name: section }).click();
+        await expect(page.locator('.figure')).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), section).toBe(true);
+        for (const target of await page.locator('main button, .controls button, .controls select, .top button').all()) { const box = await target.boundingBox(); if (box && !(await target.evaluate(e => e.closest('.hours-plot')))) expect(box.height, await target.innerText()).toBeGreaterThanOrEqual(40); }
+        await page.screenshot({ path: `test-results/${name}-${colorScheme}-${section.toLowerCase()}.png`, fullPage: true });
+
+    }
+
+});
+
+test('sin dirección fija, la pide una vez y la conserva', async ({ page }) => {
+
+    await mock(page, { signedIn: false });
+    await page.goto('http://127.0.0.1:5191/');
+    await page.getByLabel('Dirección del servidor').fill('https://servidor.test/ruta');
+    await page.getByRole('button', { name: 'Continuar' }).click();
+    await expect(page.getByRole('alert')).toContainText('sin ruta');
+    await page.getByLabel('Dirección del servidor').fill('https://servidor.test');
+    await page.getByRole('button', { name: 'Continuar' }).click();
+    await page.getByLabel('Correo').fill('dueno@ejemplo.mx');
+    await page.getByLabel('Contraseña').fill('una contraseña larga');
+    await page.getByLabel('Código del autenticador').fill('123456');
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await expect(page.locator('.figure')).toBeVisible();
+    await page.reload();
+    await expect(page.locator('.figure')).toBeVisible();
+
+});
+
+test('el aviso de privacidad se lee antes de entrar y desde el panel', async ({ page }) => {
+
+    await mock(page, { signedIn: false });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Aviso de privacidad' }).click();
+    await expect(page.getByRole('heading', { name: 'Aviso de privacidad' })).toBeVisible();
+    await expect(page.getByText(/nombre visible de cada persona/)).toBeVisible();
+    await page.getByRole('button', { name: 'Volver' }).click();
+    await page.getByLabel('Correo').fill('dueno@ejemplo.mx');
+    await page.getByLabel('Contraseña').fill('una contraseña larga');
+    await page.getByLabel('Código del autenticador').fill('123456');
+    await page.getByRole('button', { name: 'Entrar' }).click();
+    await page.getByRole('button', { name: 'Aviso de privacidad' }).click();
+    await expect(page.getByRole('heading', { name: 'Tus derechos' })).toBeVisible();
+    await page.getByRole('button', { name: 'Volver' }).click();
+    await expect(page.locator('.figure')).toBeVisible();
+
+});
