@@ -26,6 +26,10 @@ try{
         $jni='src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a'
         New-Item -ItemType Directory -Force $jni | Out-Null
         Copy-Item $lib $jni -Force
+        # Tauri writes the version only when its own build finishes; without it Gradle says 1.0 and Android cannot tell an update.
+        $version=(Get-Content 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json).version
+        $parts=$version.Split('.') | ForEach-Object { [int]$_ }
+        [IO.File]::WriteAllText((Join-Path $root 'src-tauri/gen/android/app/tauri.properties'),"tauri.android.versionName=$version`ntauri.android.versionCode=$($parts[0]*1000000+$parts[1]*1000+$parts[2])`n")
         $variant=if($Release){'Release'}else{'Debug'}
         Push-Location 'src-tauri/gen/android'
         try{& .\gradlew.bat "assembleArm64$variant" -x "rustBuildArm64$variant";if($LASTEXITCODE){throw 'Falló Gradle.'}}finally{Pop-Location}
