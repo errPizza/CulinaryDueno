@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const seen = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
-const live = { at: seen(1), openAccounts: 4, occupiedTables: 3, openAmount: 124050, pendingRequests: 0, cashOpen: true, lowStock: [{ ingredientId: 'i1', name: 'Tortilla de maíz', unit: 'pz', available: 40, min: 100 }] };
+const live = { at: seen(1), openAccounts: 4, occupiedTables: 3, openAmount: 124050, pendingRequests: 0, cashOpen: true, lowStock: [{ ingredientId: 'i1', name: 'Tortilla de maíz', unit: 'pz', available: 40, min: 100 }], tables: { total: 12, free: 8, occupied: 3, cleaning: 1, reserved: 0 }, partial: { count: 1, paid: 20000 }, onClock: { people: 5, hourlyCost: 30000 } };
 const local = new Date(Date.now() - 4 * 3_600_000).toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
 const branch = (licenseId: string, name: string, minutes: number | null) => ({ licenseId, name, tier: 'pro', licenseStatus: 'active', lastSeenAt: minutes === null ? null : seen(minutes), stale: minutes === null || minutes > 15, timeZone: minutes === null ? null : 'America/Mexico_City', businessDate: minutes === null ? null : local, businessDayCutoffMinutes: minutes === null ? null : 240, lastZ: 12, appVersion: '0.3.3', live: minutes === null ? null : live });
 const centro = branch('c', 'Centro', 1), norte = branch('n', 'Polanco Norte con nombre largo', 90), nueva = branch('z', 'Coyoacán', null);
@@ -9,9 +9,13 @@ const totals = (net: number, tickets: number) => ({ tickets, people: tickets * 2
 const back = (days: number) => new Date(Date.parse(local) - days * 86_400_000).toISOString().slice(0, 10);
 const hours = [[13, 4, 182500], [14, 11, 512000], [15, 9, 421050], [19, 6, 267900], [1, 2, 66025]].map(([hour, tickets, net]) => ({ hour, tickets, net }));
 
+let saved: any[] = [];
+
 async function mock(page: Page, { branches = [centro, norte, nueva], signedIn = true }: { branches?: any[]; signedIn?: boolean } = {}) {
 
     const calls: string[] = [];
+
+    saved = [];
 
     await page.route('https://servidor.test/**', async route => {
 
@@ -40,6 +44,53 @@ async function mock(page: Page, { branches = [centro, norte, nueva], signedIn = 
         const figures = (b: any) => b.licenseId === 'z' ? totals(0, 0) : b.licenseId === 'n' ? totals(321075, 9) : totals(1449475, 32);
         const net = rows.reduce((t, b) => t + figures(b).net, 0), tickets = rows.reduce((t, b) => t + figures(b).tickets, 0);
 
+        if (url.pathname === '/owner/v1/settings') {
+
+            if (route.request().method() === 'PUT') { saved.push(route.request().postDataJSON()); return reply({ settings: route.request().postDataJSON(), canEdit: true }); }
+
+            return reply({ settings: { shifts: [{ name: 'Mañana', start: 7 }, { name: 'Comida', start: 12 }, { name: 'Noche', start: 18 }], goals: [{ licenseId: '', period: 'month', amount: 50_000_000 }], fixedCosts: [{ licenseId: 'c', name: 'Renta', monthly: 3_000_000 }], foodCostTargetBps: 3000, laborTargetBps: 3000, countClockLabor: true, locations: [] }, canEdit: true });
+
+        }
+        if (url.pathname === '/owner/v1/geocode') return reply({ places: [{ label: 'Monterrey, Nuevo León, México', lat: 25.67, lon: -100.31 }] });
+        if (url.pathname === '/owner/v1/stats/alerts') return reply({ today: local, alerts: [
+            { level: 'high', area: 'Inventario', title: 'Leche caduca hoy', detail: '$25.00 en existencia. Promociona Licuado.', licenseId: 'c', branchName: 'Centro' },
+            { level: 'medium', area: 'Costos', title: 'Aguacate subió 25 %', detail: 'Afecta a Guacamole.', licenseId: 'c', branchName: 'Centro' },
+            { level: 'info', area: 'Metas', title: 'Meta del mes atrasada', detail: 'Llevas $1,000.00 de $500,000.00.', licenseId: null, branchName: null }
+        ] });
+        if (url.pathname === '/owner/v1/stats/goals') return reply({ today: local, goals: [{ licenseId: '', branchName: null, period: 'month', from: local.slice(0, 8) + '01', to: local, target: 50_000_000, actual: 17_705_50, tickets: 41, progressBps: 354, expected: 5_000_000, projected: 5_000_000, pace: 'behind', outOfRange: [] }] });
+        if (url.pathname === '/owner/v1/stats/trend') return reply({ from, to, ...marks, by: url.searchParams.get('by'), total: 900000, lastYearTotal: 750000, hasLastYear: true, periods: [
+            { key: url.searchParams.get('by') === 'year' ? local.slice(0, 4) : local.slice(0, 7), from, to, tickets: 30, people: 60, net: 900000, days: 3, lastYearNet: 750000, lastYearTickets: 25, averageTicket: 30000, growthBps: 2000 }
+        ] });
+        if (url.pathname === '/owner/v1/stats/menu') return reply({ from, to, ...marks, foodCostTargetBps: 3000, kinds: [{ kind: 'food', quantity: 120, revenue: 360000 }, { kind: 'drink', quantity: 40, revenue: 100000 }], thresholds: { popularShareBps: 1750, averageMargin: 2850 }, uncosted: [{ name: 'Agua de horchata', category: 'Bebidas', revenue: 100000 }], totals: { revenue: 460000, costedRevenue: 360000, cost: 120000, foodCostBps: 3333 },
+            items: [
+                { name: 'Tacos al pastor', category: 'Tacos', quantity: 120, revenue: 360000, cost: 120000, unitMargin: 2000, shareBps: 6000, foodCostBps: 3333, price: 3000, suggestedPrice: 3400, class: 'plowhorse', advice: 'Se vende mucho y deja poco: sube el precio poco a poco o baja el costo de la receta.' },
+                { name: 'Langosta', category: 'Mar', quantity: 5, revenue: 100000, cost: 30000, unitMargin: 14000, shareBps: 400, foodCostBps: 3000, price: 20000, suggestedPrice: null, class: 'puzzle', advice: 'Deja buen margen pero se pide poco: recomiéndalo, muévelo a un lugar visible o renómbralo.' }
+            ],
+            weekdays: [], slowDays: [{ weekday: 2, days: 4, average: 50000, belowBps: 3500 }], peakHours: [{ hour: 14, net: 512000, aboveBps: 9000 }],
+            costAlerts: [{ licenseId: 'c', branchName: 'Centro', ingredientId: 'a', name: 'Aguacate', unit: 'g', before: 4_000_000, after: 5_000_000, changeBps: 2500, at: seen(60), products: [{ name: 'Guacamole', price: 9000, cost: 3500 }] }],
+            expiring: [{ licenseId: 'c', branchName: 'Centro', ingredientId: 'l', name: 'Leche', unit: 'ml', quantity: 1000, cost: 2500, expiresOn: local, days: 0, products: ['Licuado'] }] });
+        if (url.pathname === '/owner/v1/stats/team') return reply({ from, to, ...marks, laborTargetBps: 3000, averageWage: 6000,
+            staff: [{ licenseId: 'c', branchName: 'Centro', staffId: 's1', name: 'Ana López', role: 'mesero', tickets: 20, net: 900000, tips: 50000, people: 44, tables: 12, voids: 9, voidAmount: 27000, discounts: 0, discountAmount: 0, rejected: 0, reopens: 0, drawerOpens: 0, minutes: 480, laborCost: 48000, averageTicket: 45000, salesPerHour: 112500 }],
+            couriers: [{ licenseId: 'c', branchName: 'Centro', courierId: 'r1', name: 'Rafa', deliveries: 6, net: 200000 }],
+            labor: { minutes: 480, cost: 48000, net: 900000, laborBps: 533, byHour: [{ hour: 1, net: 1000, minutes: 60, cost: 6000, laborBps: 60000 }], now: { people: 2, hourlyCost: 12000 } },
+            tips: { total: 50000, minutes: 480, shares: [{ licenseId: 'c', staffId: 's1', name: 'Ana López', branchName: 'Centro', minutes: 480, share: 50000 }] },
+            anomalies: [{ licenseId: 'c', branchName: 'Centro', staffId: 's1', name: 'Ana López', metric: 'voids', label: 'cancelaciones', value: 9, usual: 1, amount: 27000 }],
+            schedule: [{ weekday: 1, hour: 14, expectedNet: 300000, currentPeople: 3, suggestedPeople: 2 }],
+            roster: { active: 12, months: [], hires: 4, exits: 3, turnoverBps: 2500 } });
+        if (url.pathname === '/owner/v1/stats/profit') return reply({ from, to, ...marks, net: 1160000, tax: 160000, sales: 1000000, cogs: 300000, revenueWithoutCost: 100000, waste: 5000, expenses: [{ account: 'Limpieza', amount: 20000, count: 2 }], expensesTotal: 20000, labor: { minutes: 1200, cost: 120000, counted: true }, fixed: [{ licenseId: 'c', name: 'Renta', monthly: 3_000_000, amount: 100000 }], fixedTotal: 100000, profit: 455000, marginBps: 4550, foodCostBps: 3000, laborBps: 1200 });
+        if (url.pathname === '/owner/v1/stats/kitchen') return reply({ from, to, ...marks, totals: { dishes: 160, averageSeconds: 540, returns: 2, returnBps: 125 },
+            dishes: [{ name: 'Tacos al pastor', station: 'Plancha', count: 120, averageSeconds: 600, averagePrep: 480, averageWait: 120, averagePass: 90, maxSeconds: 1500 }],
+            stations: [{ station: 'Plancha', count: 120, averageSeconds: 600, maxSeconds: 1500 }, { station: 'Barra', count: 40, averageSeconds: 180, maxSeconds: 300 }],
+            returns: [{ name: 'Tacos al pastor', count: 2, sold: 120, rateBps: 167, reasons: [{ reason: 'cold', label: 'Llegó frío', count: 2 }] }], reasons: [{ reason: 'cold', label: 'Llegó frío', count: 2 }],
+            promises: [{ mode: 'delivery', count: 10, late: 2, onTimeBps: 8000, averagePromised: 2700, averageActual: 2900 }] });
+        if (url.pathname === '/owner/v1/stats/customers') return reply({ from, to, ...marks,
+            period: { tickets: 41, net: 1770550, identifiedTickets: 10, identifiedNet: 400000, first: 3, repeat: 7, identifiedBps: 2439, averageIdentified: 40000 },
+            known: { identified: 320, active90: 120, repeat90: 45, averageGapDays: 18, lifetimeAverage: 185000, visitsAverageTenths: 42, vip: 32, vipLapsed: 5, lapsedDays: 21 },
+            reviews: { count: 12, foodTenths: 44, serviceTenths: 38, overallTenths: 41, low: 1 },
+            best: [{ name: 'Tacos al pastor', count: 8, averageTenths: 46 }], worst: [{ name: 'Sopa del día', count: 3, averageTenths: 28 }] });
+        if (url.pathname === '/owner/v1/stats/forecast') return reply({ ...marks, today: local, trend: 1.02, errorBps: 850, historyDays: 56, weather: null,
+            days: Array.from({ length: 7 }, (_, i) => ({ date: back(-1 - i), weekday: 1, weeks: 8, base: 1000000, net: 1020000, tickets: 34, low: 930000, high: 1110000, trend: 1.02, holiday: i === 2 ? { name: 'Revolución Mexicana', factor: 1.05, learned: false } : null, weather: null, factor: 1.02 })),
+            products: [{ name: 'Tacos al pastor', days: Array.from({ length: 7 }, (_, i) => ({ date: back(-1 - i), units: 41 })) }] });
         if (url.pathname === '/owner/v1/stats/products') return reply({ from, to, ...marks, products: [
             { name: 'Tacos al pastor', category: 'Tacos', quantity: 120, revenue: 360000, cost: 120000, revenueWithoutCost: 0, estimatedMargin: 240000 },
             { name: 'Agua de horchata de temporada con nombre muy largo', category: 'Bebidas', quantity: 40, revenue: 100000, cost: 0, revenueWithoutCost: 100000, estimatedMargin: 0 }
@@ -55,7 +106,7 @@ async function mock(page: Page, { branches = [centro, norte, nueva], signedIn = 
             { licenseId: 'n', branchName: 'Polanco Norte con nombre largo', staffId: 's2', name: 'Beto', tickets: 0, net: 0, tips: 2000 }
         ] });
 
-        return reply({ from, to, ...marks, totals: totals(net, tickets), partial: rows.filter(b => b.stale).map(b => b.licenseId), branches: rows.map(b => ({ ...b, ...figures(b), hasData: b.licenseId !== 'z', openDays: 0 })).sort((a, b) => Number(b.hasData) - Number(a.hasData) || b.net - a.net), days: tickets && from !== to ? [{ businessDate: to, tickets, net }] : [], hours: tickets ? hours : [], channels: tickets ? [{ channel: 'table', tickets: tickets - 5, net: net - 200000 }, { channel: 'delivery', tickets: 5, net: 200000 }] : [], payments: [{ method: 'card', amount: 1000000, tips: 50000, count: 20 }, { method: 'cash', amount: 770550, tips: 0, count: 21 }], refunds: [] });
+        return reply({ from, to, ...marks, totals: totals(net, tickets), partial: rows.filter(b => b.stale).map(b => b.licenseId), branches: rows.map(b => ({ ...b, ...figures(b), hasData: b.licenseId !== 'z', openDays: 0 })).sort((a, b) => Number(b.hasData) - Number(a.hasData) || b.net - a.net), days: tickets && from !== to ? [{ businessDate: to, tickets, net }] : [], hours: tickets ? hours : [], channels: tickets ? [{ channel: 'table', tickets: tickets - 5, net: net - 200000 }, { channel: 'delivery', tickets: 5, net: 200000 }] : [], payments: [{ method: 'card', amount: 1000000, tips: 50000, count: 20 }, { method: 'cash', amount: 770550, tips: 0, count: 21 }], refunds: [], shifts: tickets ? [{ name: 'Mañana', start: 7, end: 12, tickets: 0, people: 0, net: 0, averageTicket: 0 }, { name: 'Comida', start: 12, end: 18, tickets: tickets - 8, people: 0, net: net - 333925, averageTicket: 0 }, { name: 'Noche', start: 18, end: 7, tickets: 8, people: 0, net: 333925, averageTicket: 0 }] : [], areas: tickets ? [{ area: 'Terraza', tickets: 10, people: 20, net: 400000 }, { area: '', tickets: tickets - 10, people: 0, net: net - 400000 }] : [] });
 
     });
 
@@ -308,10 +359,11 @@ for (const [name, width, height] of [['telefono', 360, 760], ['escritorio', 1280
     await mock(page);
     await page.goto('/');
 
-    for (const section of ['Resumen', 'Productos', 'Caja', 'Personal']) {
+    for (const section of ['Resumen', 'Productos', 'Caja', 'Personal', 'Tendencia', 'Pronóstico', 'Rentabilidad', 'Cocina', 'Clientes', 'Alertas', 'Ajustes']) {
 
-        await page.getByRole('button', { name: section }).click();
-        await expect(page.locator('.figure')).toBeVisible();
+        if (['Resumen', 'Productos', 'Caja', 'Personal'].includes(section)) await page.locator('.sections > button').filter({ hasText: section }).click();
+        else { await page.locator('.sections > button[aria-haspopup="menu"]').click(); await page.getByRole('menuitem', { name: section }).click(); }
+        await expect(page.locator('main h1')).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), section).toBe(true);
         for (const target of await page.locator('main button, .controls button, .controls select, .top button').all()) { const box = await target.boundingBox(); if (box && !(await target.evaluate(e => e.closest('.hours-plot')))) expect(box.height, await target.innerText()).toBeGreaterThanOrEqual(40); }
         await page.screenshot({ path: `test-results/${name}-${colorScheme}-${section.toLowerCase()}.png`, fullPage: true });
@@ -355,5 +407,114 @@ test('el aviso de privacidad se lee antes de entrar y desde el panel', async ({ 
     await expect(page.getByRole('heading', { name: 'Tus derechos' })).toBeVisible();
     await page.getByRole('button', { name: 'Volver' }).click();
     await expect(page.locator('.figure')).toBeVisible();
+
+});
+
+test('resumen: metas, turnos, áreas y lo que pasa ahora en el piso', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Metas' })).toBeVisible();
+    await expect(page.getByText(/Vas atrasado: a este ritmo cerrarías en \$50,000\.00/)).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Ventas por turno' })).toContainText('Comida · 12:00 a 18:00');
+    await expect(page.getByRole('list', { name: 'Ventas por área' })).toContainText('Terraza');
+    await expect(page.locator('.block.now')).toContainText('Mesas libres');
+    await expect(page.locator('.block.now')).toContainText('En turno');
+
+});
+
+test('productos: ingeniería de menú, precio sugerido, mix, costos que suben y lotes por caducar', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Productos' }).click();
+    await expect(page.getByRole('heading', { name: /Caballos de batalla/ })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Enigmas/ })).toBeVisible();
+    await expect(page.getByText('Tacos al pastor: de $30.00 a $34.00')).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Ventas por tipo' })).toContainText('Bebidas sin alcohol');
+    await expect(page.getByText('Los martes venden 35 % menos que el promedio')).toBeVisible();
+    await expect(page.getByText('Centro · Aguacate subió 25 %')).toBeVisible();
+    await expect(page.getByText('Centro · Leche: caduca hoy')).toBeVisible();
+
+});
+
+test('personal: eficiencia, costo laboral, propinas por horas, horario sugerido y patrones para el dueño', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Personal' }).click();
+    await expect(page.getByRole('list', { name: 'Eficiencia por persona' })).toContainText('$1,125.00 por hora');
+    await expect(page.getByText('Horas sobre tu meta de 30 %: 01:00 (600 %)')).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Reparto de propinas' })).toContainText('8 h 00 min');
+    await expect(page.getByRole('list', { name: 'Ventas por repartidor' })).toContainText('Rafa');
+    await expect(page.getByText('Ana López: 9 cancelaciones')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Personal sugerido para la próxima semana' })).toBeVisible();
+
+});
+
+test('«Más» abre tendencia, pronóstico, rentabilidad, cocina, clientes y alertas', async ({ page }) => {
+
+    const calls = await mock(page);
+    await page.goto('/');
+    const more = async (name: string) => { await page.locator('.sections > button[aria-haspopup="menu"]').click(); await page.getByRole('menuitem', { name }).click(); };
+
+    await more('Tendencia');
+    await expect(page.locator('.figure')).toHaveText('$9,000.00');
+    await expect(page.getByText('20 % más que el mismo tramo del año pasado')).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Periodo' })).toBeHidden();
+    await page.getByRole('button', { name: 'Años' }).click();
+    await expect.poll(() => calls.some(c => c.includes('/stats/trend') && c.includes('by=year'))).toBe(true);
+
+    await more('Pronóstico');
+    await expect(page.locator('.figure')).toHaveText('$10,200.00');
+    await expect(page.getByText('Revolución Mexicana').first()).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Qué preparar' })).toBeVisible();
+
+    await more('Rentabilidad');
+    await expect(page.locator('.figure')).toHaveText('$4,550.00');
+    await expect(page.locator('.statement')).toContainText('Fijo · Renta');
+    await expect(page.getByText(/\$1,000\.00 vendidos sin receta/)).toBeVisible();
+
+    await more('Cocina');
+    await expect(page.locator('.figure')).toHaveText('9 min');
+    await expect(page.getByText('Tacos al pastor', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('A domicilio: 80 % a tiempo')).toBeVisible();
+
+    await more('Clientes');
+    await expect(page.locator('.figure')).toHaveText('320');
+    await expect(page.getByText('4.1 de 5').first()).toBeVisible();
+
+    await more('Alertas');
+    await expect(page.locator('.alert.high')).toContainText('Leche caduca hoy');
+    await expect(page.locator('.bell .count')).toHaveText('2');
+
+});
+
+test('ajustes: el dueño cambia turnos, metas y gastos fijos y busca la ciudad', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await page.locator('.sections > button[aria-haspopup="menu"]').click();
+    await page.getByRole('menuitem', { name: 'Ajustes' }).click();
+    await page.getByRole('button', { name: 'Agregar turno' }).click();
+    await page.getByLabel('Meta en pesos').fill('600000');
+    await page.getByLabel('Ciudad').first().fill('Monterrey');
+    await page.getByRole('button', { name: 'Buscar' }).first().click();
+    await page.getByRole('button', { name: 'Monterrey, Nuevo León, México' }).click();
+    await page.getByRole('button', { name: 'Guardar ajustes' }).click();
+    await expect(page.getByRole('status')).toContainText('Ajustes guardados');
+    expect(saved.at(-1).shifts).toHaveLength(4);
+    expect(saved.at(-1).goals[0].amount).toBe(60_000_000);
+    expect(saved.at(-1).locations[0]).toMatchObject({ licenseId: 'c', label: 'Monterrey, Nuevo León, México' });
+
+});
+
+test('sólo con sucursales Lite, las áreas nuevas también lo dicen', async ({ page }) => {
+
+    await mock(page, { branches: [{ ...centro, tier: 'lite' }] });
+    await page.goto('/');
+    await page.locator('.sections > button[aria-haspopup="menu"]').click();
+    await page.getByRole('menuitem', { name: 'Cocina' }).click();
+    await expect(page.getByRole('heading', { name: 'Cocina es del plan Pro' })).toBeVisible();
 
 });

@@ -3,14 +3,15 @@ import type * as api from './api';
 import type { Data, View } from './app';
 import { clockTime, methodLabel, money, percent, plural, rangeLabel, whole } from './format';
 import { allLite, Behind, Block, Facts, OutOfRange, ProNote, Rows } from './parts';
+import { MenuBlocks, TeamBlocks } from './insights';
 
 const TOP = 10, BOTTOM = 5;
 
-type Of<S extends Data['section']> = { view: View; data: Extract<Data, { section: S }> };
+export type Of<S extends Data['section']> = { view: View; data: Extract<Data, { section: S }> };
 
-const sum = <T,>(rows: readonly T[], read: (row: T) => number) => rows.reduce((total, row) => total + read(row), 0);
+export const sum = <T,>(rows: readonly T[], read: (row: T) => number) => rows.reduce((total, row) => total + read(row), 0);
 
-function Headline({ view, title, figure, outOfRange, children }: { view: View; title: string; figure: string; outOfRange: string[]; children: ReactNode }) {
+export function Headline({ view, title, figure, outOfRange, children }: { view: View; title: string; figure: string; outOfRange: string[]; children: ReactNode }) {
 
     return <section className="headline" aria-label={title}>
 
@@ -24,12 +25,12 @@ function Headline({ view, title, figure, outOfRange, children }: { view: View; t
 }
 
 /** A whole Pro area seen with only Lite branches: said once, instead of a page of zeros. */
-function Locked({ title, what }: { title: string; what: string }) {
+export function Locked({ title, what }: { title: string; what: string }) {
 
     return <main className="empty"><h2>{title} es del plan Pro</h2><p>{what} Pide a tu proveedor el cambio de plan.</p></main>;
 }
 
-const branchOf = (view: View) => { const names = new Map(view.me.branches.map(b => [b.licenseId, b.name])); return (licenseId: string) => view.scope.length > 1 ? `${names.get(licenseId) ?? 'Sucursal'} · ` : ''; };
+export const branchOf = (view: View) => { const names = new Map(view.me.branches.map(b => [b.licenseId, b.name])); return (licenseId: string) => view.scope.length > 1 ? `${names.get(licenseId) ?? 'Sucursal'} · ` : ''; };
 
 /** Margin only counts what has a recipe: the rest is named, so a high margin is not read as the whole menu. */
 export function ProductsView({ view, data }: Of<'products'>) {
@@ -94,6 +95,7 @@ export function ProductsView({ view, data }: Of<'products'>) {
             </Block>}
 
         </div>
+        {!onlyLite && <MenuBlocks view={view} menu={data.menu} />}
 
     </main>;
 }
@@ -200,6 +202,7 @@ export function StaffView({ view, data }: Of<'staff'>) {
             {byTips.length > 0 && <Block title="Propinas"><Rows label="Propinas por mesero" rows={byTips.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.tips, note: `${branch(s.licenseId)}${percent(s.tips, tips)}` }))} /></Block>}
 
         </div>
+        <TeamBlocks view={view} team={data.team} />
 
     </main>;
 }

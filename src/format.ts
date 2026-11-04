@@ -69,6 +69,24 @@ export const percent = (part: number, total: number) => total ? `${(Math.round(p
 const METHODS: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia', platform: 'Plataformas', online: 'En línea' };
 const CHANNELS: Record<string, string> = { table: 'Mesa', quick: 'Venta rápida', delivery: 'Domicilio', pickup: 'Para llevar', takeout: 'Para llevar', platform: 'Plataformas', staff: 'Comida de empleados' };
 
+/** Basis points, as the server sends ratios: 1234 is 12.3 %. */
+export const bps = (value: number) => `${(Math.round(value / 10) / 10).toLocaleString('es-MX')} %`;
+export const tenths = (value: number) => (value / 10).toLocaleString('es-MX', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+export function duration(seconds: number) {
+
+    const minutes = Math.floor(seconds / 60), rest = Math.round(seconds % 60);
+
+    if (minutes >= 60) return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+
+    return minutes ? `${minutes} min${rest ? ` ${rest} s` : ''}` : `${rest} s`;
+}
+export const hoursWorked = (minutes: number) => `${whole(Math.floor(minutes / 60))} h ${String(minutes % 60).padStart(2, '0')} min`;
+export const WEEKDAYS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+export const dayName = (date: string) => new Date(date + 'T12:00:00Z').toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).replace(/\./g, '');
+const KINDS: Record<string, string> = { food: 'Comida', drink: 'Bebidas sin alcohol', alcohol: 'Bebidas con alcohol', other: 'Otros', '': 'Sin clasificar' };
+export const kindLabel = (kind: string) => KINDS[kind] ?? kind;
+const MODES: Record<string, string> = { pickup: 'Para recoger', delivery: 'A domicilio' };
+export const modeLabel = (mode: string) => MODES[mode] ?? mode;
 export const methodLabel = (method: string) => METHODS[method] ?? method;
 export const channelLabel = (channel: string) => CHANNELS[channel] ?? channel;
 export const clockTime = (at: string, timeZone?: string | null) => new Date(at).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: timeZone ?? undefined });

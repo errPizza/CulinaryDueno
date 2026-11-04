@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChartColumn, CircleAlert, LogOut, RefreshCw, Users, UtensilsCrossed, Wallet } from 'lucide-react';
+import { Bell, ChartColumn, ChefHat, CircleAlert, CloudSun, Ellipsis, HandCoins, HeartHandshake, LogOut, RefreshCw, Settings2, TrendingUp, Users, UtensilsCrossed, Wallet } from 'lucide-react';
 import * as api from './api';
 import { CashView, ProductsView, StaffView } from './detail';
+import { AlertsView, AreasBlock, CustomersView, ForecastView, GoalsBlock, KitchenView, NowMore, ProfitView, ShiftsBlock, TrendView } from './insights';
+import { SettingsView } from './settings';
 import { channelLabel, clockHour, cutoffHour, daysIn, hourLabel, MAX_DAYS, message, money, percent, PERIODS, plural, previous, range, rangeLabel, seenAt, shiftDay, soFar, todayOf, whole, type Period, type Range } from './format';
 import { Gate } from './gate';
 import { Privacy } from './privacy';
@@ -12,7 +14,7 @@ const REFRESH_MS = 60_000;
 
 const sum = <T,>(rows: readonly T[], read: (row: T) => number) => rows.reduce((total, row) => total + read(row), 0);
 
-export type Section = 'summary' | 'products' | 'cash' | 'staff';
+export type Section = 'summary' | 'products' | 'cash' | 'staff' | 'trend' | 'forecast' | 'profit' | 'kitchen' | 'customers' | 'alerts' | 'settings';
 
 const SECTIONS: { id: Section; label: string; Icon: typeof ChartColumn }[] = [
     { id: 'summary', label: 'Resumen', Icon: ChartColumn },
@@ -20,26 +22,62 @@ const SECTIONS: { id: Section; label: string; Icon: typeof ChartColumn }[] = [
     { id: 'cash', label: 'Caja', Icon: Wallet },
     { id: 'staff', label: 'Personal', Icon: Users }
 ];
+// Under «Más»: on the phone the bar keeps five buttons.
+const MORE: { id: Section; label: string; Icon: typeof ChartColumn }[] = [
+    { id: 'trend', label: 'Tendencia', Icon: TrendingUp },
+    { id: 'forecast', label: 'Pronóstico', Icon: CloudSun },
+    { id: 'profit', label: 'Rentabilidad', Icon: HandCoins },
+    { id: 'kitchen', label: 'Cocina', Icon: ChefHat },
+    { id: 'customers', label: 'Clientes', Icon: HeartHandshake },
+    { id: 'alerts', label: 'Alertas', Icon: Bell },
+    { id: 'settings', label: 'Ajustes', Icon: Settings2 }
+];
+// These read their own stretch, or none, so the period picker steps aside.
+const OWN_SPAN = new Set<Section>(['trend', 'forecast', 'alerts', 'settings']);
 
 export type Data =
-    | { section: 'summary'; summary: api.Summary; before: api.Summary }
-    | { section: 'products'; products: api.Products; cash: api.Cash }
+    | { section: 'summary'; summary: api.Summary; before: api.Summary; goals: api.Goals | null }
+    | { section: 'products'; products: api.Products; cash: api.Cash; menu: api.Menu }
     | { section: 'cash'; summary: api.Summary; cash: api.Cash; closings: api.Closings }
-    | { section: 'staff'; staff: api.Staff };
+    | { section: 'staff'; staff: api.Staff; team: api.Team }
+    | { section: 'trend'; trend: api.Trend }
+    | { section: 'forecast'; forecast: api.Forecast }
+    | { section: 'profit'; profit: api.Profit }
+    | { section: 'kitchen'; kitchen: api.Kitchen }
+    | { section: 'customers'; customers: api.Customers }
+    | { section: 'alerts'; alerts: api.Alerts }
+    | { section: 'settings'; settings: api.Settings; canEdit: boolean };
 
 export type View = { me: api.Me; scope: api.Branch[]; today: string; span: Range; loadedAt: number; data: Data };
 
 /** Each section asks only for what it shows. The summary brings the stretch it is compared with. */
-async function fetchSection(section: Section, period: Period, span: Range, branch?: string): Promise<Data> {
+/** Weeks: the last twelve; months: the last twelve; years: this one so far, each against the year before. */
+function trendSpan(by: api.Trend['by'], today: string): Range {
 
-    if (section === 'products') { const [products, cash] = await Promise.all([api.products(span.from, span.to, branch), api.cash(span.from, span.to, branch)]); return { section, products, cash }; }
+    if (by === 'week') return { from: shiftDay(today, -83), to: today };
+
+    const [year, month] = today.split('-').map(Number) as [number, number];
+
+    return { from: by === 'year' ? `${year}-01-01` : new Date(Date.UTC(year, month - 12, 1)).toISOString().slice(0, 10), to: today };
+}
+
+async function fetchSection(section: Section, period: Period, span: Range, by: api.Trend['by'], today: string, branch?: string): Promise<Data> {
+
+    if (section === 'products') { const [products, cash, menu] = await Promise.all([api.products(span.from, span.to, branch), api.cash(span.from, span.to, branch), api.menu(span.from, span.to, branch)]); return { section, products, cash, menu }; }
+    if (section === 'trend') { const own = trendSpan(by, today); return { section, trend: await api.trend(own.from, own.to, by, branch) }; }
+    if (section === 'forecast') return { section, forecast: await api.forecast(branch) };
+    if (section === 'profit') return { section, profit: await api.profit(span.from, span.to, branch) };
+    if (section === 'kitchen') return { section, kitchen: await api.kitchen(span.from, span.to, branch) };
+    if (section === 'customers') return { section, customers: await api.customers(span.from, span.to, branch) };
+    if (section === 'alerts') return { section, alerts: await api.alerts(branch) };
+    if (section === 'settings') { const reply = await api.settings(); return { section, settings: reply.settings, canEdit: reply.canEdit }; }
     if (section === 'cash') { const [summary, cash, closings] = await Promise.all([api.summary(span.from, span.to, branch), api.cash(span.from, span.to, branch), api.closings(span.from, span.to, branch)]); return { section, summary, cash, closings }; }
-    if (section === 'staff') return { section, staff: await api.staff(span.from, span.to, branch) };
+    if (section === 'staff') { const [staff, team] = await Promise.all([api.staff(span.from, span.to, branch), api.team(span.from, span.to, branch)]); return { section, staff, team }; }
 
     const before = previous(period, span);
-    const [summary, earlier] = await Promise.all([api.summary(span.from, span.to, branch), api.summary(before.from, before.to, branch)]);
+    const [summary, earlier, goals] = await Promise.all([api.summary(span.from, span.to, branch), api.summary(before.from, before.to, branch), api.goals(branch).catch(() => null)]);
 
-    return { section, summary, before: earlier };
+    return { section, summary, before: earlier, goals };
 }
 
 export function App() {
@@ -55,6 +93,7 @@ function Dashboard() {
 
     const [branch, setBranch] = useState(''), [period, setPeriod] = useState<Period>('today'), [section, setSection] = useState<Section>('summary'), [custom, setCustom] = useState<Range | null>(null);
     const [view, setView] = useState<View | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(true), [reading, setReading] = useState(false);
+    const [by, setBy] = useState<api.Trend['by']>('month'), [more, setMore] = useState(false), [alertCount, setAlertCount] = useState(0);
     const ask = useRef(0);
     const load = useCallback(async () => {
 
@@ -68,13 +107,13 @@ function Dashboard() {
             const scope = me.branches.filter(b => !branch || b.licenseId === branch);
             const today = todayOf(scope);
             const span = range(period, today, custom ?? { from: shiftDay(today, -29), to: today });
-            const data = await fetchSection(section, period, span, branch || undefined);
+            const [data, alerts] = await Promise.all([fetchSection(section, period, span, by, today, branch || undefined), api.alerts(branch || undefined).catch(() => null)]);
 
-            if (mine === ask.current) { setView({ me, scope, today, span, loadedAt: Date.now(), data }); setError(''); }
+            if (mine === ask.current) { setView({ me, scope, today, span, loadedAt: Date.now(), data }); setError(''); if (alerts) setAlertCount(alerts.alerts.filter(a => a.level !== 'info').length); }
 
         } catch (e) { if (mine === ask.current) setError(message(e)); } finally { if (mine === ask.current) setLoading(false); }
 
-    }, [branch, period, section, custom]);
+    }, [branch, period, section, custom, by]);
 
     useEffect(() => {
 
@@ -100,7 +139,14 @@ function Dashboard() {
 
             <span className="top-mark"><img src="/symbol.png" alt="" width="24" height="24" /></span>
             <b>Culinary Dueño</b>
-            <nav className="sections" aria-label="Secciones">{SECTIONS.map(({ id, label, Icon }) => <button key={id} aria-current={section === id ? 'page' : undefined} onClick={() => setSection(id)}><Icon size={20} aria-hidden="true" /><span>{label}</span></button>)}</nav>
+            <nav className="sections" aria-label="Secciones">
+
+                {SECTIONS.map(({ id, label, Icon }) => <button key={id} aria-current={section === id ? 'page' : undefined} onClick={() => { setSection(id); setMore(false); }}><Icon size={20} aria-hidden="true" /><span>{label}</span></button>)}
+                <button aria-current={MORE.some(m => m.id === section) ? 'page' : undefined} aria-expanded={more} aria-haspopup="menu" onClick={() => setMore(!more)}><Ellipsis size={20} aria-hidden="true" /><span>{MORE.find(m => m.id === section)?.label ?? 'Más'}</span></button>
+                {more && <div className="more" role="menu" aria-label="Más secciones">{MORE.map(({ id, label, Icon }) => <button key={id} role="menuitem" aria-current={section === id ? 'page' : undefined} onClick={() => { setSection(id); setMore(false); }}><Icon size={18} aria-hidden="true" /><span>{label}</span>{id === 'alerts' && alertCount > 0 && <span className="count">{alertCount}</span>}</button>)}</div>}
+
+            </nav>
+            <button className="icon bell" onClick={() => { setSection('alerts'); setMore(false); }} aria-label={alertCount ? `Alertas: ${alertCount} por atender` : 'Alertas'}><Bell size={18} />{alertCount > 0 && <span className="count" aria-hidden="true">{alertCount}</span>}</button>
             <button className="icon" onClick={() => void load()} disabled={loading} aria-label="Actualizar"><RefreshCw size={18} className={loading ? 'spin' : ''} /></button>
             <button className="icon" onClick={() => void api.logout()} aria-label={`Cerrar sesión de ${view?.me.account.email ?? 'tu cuenta'}`}><LogOut size={18} /></button>
 
@@ -117,13 +163,13 @@ function Dashboard() {
                 </select>
 
             </label>}
-            <div className="periods" role="group" aria-label="Periodo">{periods.map(p => <button key={p.id} aria-pressed={period === p.id} onClick={() => pick(p.id)}>{p.label}</button>)}</div>
-            {period === 'custom' && custom && view && <Dates key={`${custom.from}|${custom.to}`} span={custom} today={view.today} choose={setCustom} />}
+            {!OWN_SPAN.has(section) && <div className="periods" role="group" aria-label="Periodo">{periods.map(p => <button key={p.id} aria-pressed={period === p.id} onClick={() => pick(p.id)}>{p.label}</button>)}</div>}
+            {!OWN_SPAN.has(section) && period === 'custom' && custom && view && <Dates key={`${custom.from}|${custom.to}`} span={custom} today={view.today} choose={setCustom} />}
 
         </div>
         {error && <div className="banner" role="alert"><CircleAlert size={18} /><span>{error}{view && ' Lo que ves es de la última actualización.'}</span></div>}
         {!reading && (!view || view.data.section !== section) && !error && <main className="waiting" aria-busy="true">{view ? 'Cargando…' : 'Cargando tus sucursales…'}</main>}
-        {reading ? <Privacy close={() => setReading(false)} /> : view && view.data.section === section && <Content view={view} period={period} choose={setBranch} chosen={branch} />}
+        {reading ? <Privacy close={() => setReading(false)} /> : view && view.data.section === section && <Content view={view} period={period} choose={setBranch} chosen={branch} by={by} chooseBy={setBy} />}
         {!reading && <footer className="foot"><button className="link quiet-link" onClick={() => setReading(true)}>Aviso de privacidad</button></footer>}
 
     </div>;
@@ -151,7 +197,7 @@ function Dates({ span, today, choose }: { span: Range; today: string; choose: (s
     </div>;
 }
 
-function Content({ view, period, choose, chosen }: { view: View; period: Period; choose: (licenseId: string) => void; chosen: string }) {
+function Content({ view, period, choose, chosen, by, chooseBy }: { view: View; period: Period; choose: (licenseId: string) => void; chosen: string; by: api.Trend['by']; chooseBy: (by: api.Trend['by']) => void }) {
 
     if (!view.me.branches.length) return <main className="empty"><h2>Aún no hay sucursales en tu cuenta</h2><p>Pide a tu proveedor que revise el acceso de tu cuenta.</p></main>;
 
@@ -160,6 +206,13 @@ function Content({ view, period, choose, chosen }: { view: View; period: Period;
     if (data.section === 'products') return <ProductsView view={view} data={data} />;
     if (data.section === 'cash') return <CashView view={view} data={data} />;
     if (data.section === 'staff') return <StaffView view={view} data={data} />;
+    if (data.section === 'trend') return <TrendView view={view} data={data} by={by} choose={chooseBy} />;
+    if (data.section === 'forecast') return <ForecastView view={view} data={data} />;
+    if (data.section === 'profit') return <ProfitView view={view} data={data} />;
+    if (data.section === 'kitchen') return <KitchenView view={view} data={data} />;
+    if (data.section === 'customers') return <CustomersView view={view} data={data} />;
+    if (data.section === 'alerts') return <AlertsView view={view} data={data} />;
+    if (data.section === 'settings') return <SettingsView view={view} data={data} />;
 
     return <SummaryView view={view} data={data} period={period} choose={choose} chosen={chosen} />;
 }
@@ -196,6 +249,7 @@ function SummaryView({ view, data, period, choose, chosen }: { view: View; data:
         </section>
         <div className="col">
 
+            <GoalsBlock goals={data.goals} />
             {!oneDay && <Block title="Por día" className="hours-block">{summary.days.length ? <Days days={summary.days} span={span} /> : <p className="quiet">Sin ventas cerradas en este periodo.</p>}</Block>}
             <Block title={oneDay ? 'Por hora' : 'Horas pico'} className="hours-block">
 
@@ -209,6 +263,8 @@ function SummaryView({ view, data, period, choose, chosen }: { view: View; data:
 
             {(scope.length > 1 || chosen) && <Branches rows={scope} all={!chosen} today={today} choose={choose} loadedAt={loadedAt} />}
             {today && <Now rows={scope} />}
+            <ShiftsBlock shifts={summary.shifts} />
+            <AreasBlock areas={summary.areas} />
             {channels.length > 1 && <Block title="Por canal"><Rows label="Ventas por canal" rows={channels.map(c => ({ key: c.channel, name: channelLabel(c.channel), value: c.net, note: `${plural(c.tickets, 'cuenta', 'cuentas')} · ${percent(c.net, sum(channels, x => x.net))}` }))} /><ProNote branches={view.scope} lite={summary.lite} locked="" /></Block>}
             {totals.tickets > 0 && !onlyLite && <Block title="Descuentos y cancelaciones">
 
@@ -259,6 +315,7 @@ function Now({ rows }: { rows: api.Summary['branches'] }) {
     return <Block title="Ahora mismo" className="now">
 
         <Facts items={[['Cuentas abiertas', whole(add(l => l.openAccounts))], ['Mesas ocupadas', whole(add(l => l.occupiedTables))], ['Por cobrar', money(add(l => l.openAmount))], ['Cajas abiertas', whole(live.filter(l => l.cashOpen).length)]]} />
+        <NowMore rows={rows} />
 
     </Block>;
 }
