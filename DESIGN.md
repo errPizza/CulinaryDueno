@@ -1,29 +1,35 @@
 # Design — Culinary Dueño
 
-World: la tira del corte de caja al final de la noche. Una cifra arriba y debajo renglones separados por una línea fina. Rechaza el tablero de tarjetas iguales.
+World: el corte del día visto en vivo. Una tarjeta grafito con la cifra que responde la pantalla y, alrededor, tarjetas blancas con lo que la explica. Lo que importa resalta; lo demás queda en gris.
 
 ## Tokens (src/theme.css)
 
 | Rol | Claro | Oscuro |
 |---|---|---|
-| Barra superior `--top` | #202733 | #202733 |
-| Fondo `--bg` | #e7e9ed | #161b23 |
-| Texto `--ink` | #242e3b | #eef1f5 |
-| Secundario `--muted` | #596575 | #a5afbc |
-| Líneas `--line` | #cdd3dc | #323c4a |
-| Barras `--bar` | #273241 | #8fa0b5 |
-| Acción `--amber` sobre `--amber-ink` | #f2b93b / #29210c | igual |
-| Marca sobre fondo `--mark` | #b97b00 | #f2b93b |
-| Atraso `--late` | #af2d22 | #ff9f8f |
+| Tarjeta protagonista y barra de secciones `--top` | #1b212b | #222a37 |
+| Fondo `--bg` | #edf0f4 | #0f1319 |
+| Tarjetas `--sheet` | #ffffff | #181e27 |
+| Mosaicos dentro de tarjetas `--raised` | #f4f6f9 | #1f2631 |
+| Texto `--ink` | #18202b | #f1f4f8 |
+| Secundario `--muted` | #5a6575 | #9aa5b4 |
+| Cifras neutras `--neutral` | #5b6676 | #a7b1bf |
+| Barras neutras `--bar` | #b9c2ce | #4a5566 |
+| Acción `--amber` sobre `--amber-ink` | #f2b93b / #2a1f05 | igual |
+| Dato principal `--amber-data` | #d99a1c | #f2b93b |
+| Bueno `--ok`, píldora `--good-bg` / `--good-ink` | #15803d · #dcfce7 / #166534 | #4ade80 · #123020 / #7ee8a4 |
+| Malo `--late`, píldora `--late-wash` / `--bad-ink` | #c2321f · #fee4e2 / #9f1d14 | #ff8a7a · #3a1a17 / #ffb4a8 |
 
 El tema sigue al sistema: el dueño consulta tanto a mediodía en la calle como de noche.
 
-Tipo: Inter Variable con cifras tabulares.
+Tipo: Inter Variable con cifras tabulares. Cifras grandes a 650–700 con tracking negativo; los centavos de la cifra principal van más chicos.
 
 ## Rules
 
-- **Ámbar.** Una sola marca por vista: la acción, el periodo elegido o la hora en curso. `--mark` existe porque #f2b93b no alcanza 3:1 sobre el fondo claro.
-- **Rojo.** Sólo una sucursal atrasada o un error, siempre con icono y texto.
-- **Sin tarjetas.** Las secciones se separan con una línea, como renglones del corte.
-- **Gráficas.** Barras neutras y una sola resaltada. Una figura de una sola serie no lleva leyenda. Toda gráfica tiene vista de tabla, y su cifra aparece en texto sobre la gráfica, sin tooltip flotante, porque en un teléfono el dedo lo taparía.
-- **Teléfono primero.** Una columna hasta 900 px. Objetivos de 44 px.
+- **Una tarjeta grafito por vista.** Lleva la cifra que responde la pantalla y, en el Resumen, su gráfica. Todo lo demás va en tarjetas blancas de 20 px, sin borde y con sombra muy suave.
+- **Color por significado.** Las cifras neutras van en gris (`--neutral`). Un cambio contra el tramo anterior va en píldora con flecha y signo: verde si fue en la buena dirección, rojo si fue en la mala, gris («Igual») si no cambió. En descuentos, cancelaciones y cortesías subir es malo.
+- **Comparar sólo lo comparable.** Hoy se compara con ayer hasta la última hora cerrada. Las píldoras por sucursal, canal y ajustes sólo salen cuando los dos lados son periodos completos con las mismas sucursales.
+- **Ámbar.** La acción, el periodo o la cifra elegida y el dato principal de cada gráfica (las ventas de hoy, la barra mayor, lo vendido de la meta).
+- **Rojo.** Una cifra mala, una sucursal sin contacto o un error, siempre con icono, flecha o texto.
+- **Gráficas.** Barras redondeadas; el tramo anterior como contorno detrás de cada barra. Toda gráfica tiene vista de tabla, y su cifra aparece en texto sobre la gráfica, sin tooltip flotante, porque en un teléfono el dedo lo taparía.
+- **Movimiento.** Las tarjetas entran escalonadas, la cifra del día sube desde su valor anterior, las barras crecen y la meta se llena. Con movimiento reducido no se anima nada.
+- **Teléfono primero.** Una columna hasta 900 px con la barra de secciones flotando abajo; en escritorio, barra lateral con todas las secciones. Objetivos de 44 px.

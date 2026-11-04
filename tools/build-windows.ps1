@@ -1,6 +1,6 @@
 ﻿# Compila el instalador de Windows (NSIS) con Rust y MSVC locales. Reutiliza por defecto la caja de herramientas
 # de MesaNexoNativo (.tools: cargo, rustup, SDK de Windows y encabezados de MSVC).
-param([string]$Tools=(Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'MesaNexoNativo/.tools'),[string]$ServerUrl='',[string]$ProviderName='',[string]$PrivacyEmail='')
+param([string]$Tools=(Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'MesaNexoNativo/.tools'),[string]$ServerUrl='',[string]$ProviderName='',[string]$PrivacyEmail='',[string]$Keys=(Join-Path $env:USERPROFILE '.culinary-firma'))
 $ErrorActionPreference='Stop'
 $env:VITE_SERVER_URL=$ServerUrl
 # Quien responde por los datos, para el aviso de privacidad de la app.
@@ -24,7 +24,7 @@ try{
     if(-not(Test-Path 'node_modules')){& npm.cmd ci --no-audit --no-fund;if($LASTEXITCODE){throw 'No se pudieron instalar las dependencias.'}}
     # Firma con las llaves de Culinary (MesaNexoNativo/tools/New-SigningKeys.ps1).
     $config=Join-Path $root 'src-tauri/target/firma.json'
-    $sign=@{bundle=@{windows=@{signCommand=@{cmd='powershell';args=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path (Split-Path $root -Parent) 'MesaNexoNativo/tools/Sign-Package.ps1'),'%1')}}}} | ConvertTo-Json -Depth 6
+    $sign=@{bundle=@{windows=@{signCommand=@{cmd='powershell';args=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path (Split-Path $root -Parent) 'MesaNexoNativo/tools/Sign-Package.ps1'),'%1','-Directory',$Keys)}}}} | ConvertTo-Json -Depth 6
     New-Item -ItemType Directory -Force (Split-Path $config) | Out-Null
     [IO.File]::WriteAllText($config,$sign)
     & npm.cmd run tauri -- build --config $config

@@ -4,11 +4,11 @@ import * as api from './api';
 import { CashView, ProductsView, StaffView } from './detail';
 import { AlertsView, AreasBlock, CustomersView, ForecastView, GoalsBlock, KitchenView, NowMore, ProfitView, ShiftsBlock, TrendView } from './insights';
 import { SettingsView } from './settings';
-import { channelLabel, clockHour, cutoffHour, daysIn, hourLabel, MAX_DAYS, message, money, percent, PERIODS, plural, previous, range, rangeLabel, seenAt, shiftDay, soFar, todayOf, whole, type Period, type Range } from './format';
+import { channelLabel, clockHour, cutoffHour, dayOrder, daysIn, hourLabel, MAX_DAYS, message, money, percent, PERIODS, plural, previous, range, rangeLabel, seenAt, shiftDay, soFar, todayOf, whole, type Period, type Range } from './format';
 import { Gate } from './gate';
 import { Privacy } from './privacy';
-import { Days, Hours } from './hours';
-import { allLite, Behind, Block, branchNames, Facts, OutOfRange, ProNote, Rows, Versus } from './parts';
+import { Days, Hours, METRICS, type Metric } from './hours';
+import { allLite, Behind, Block, branchNames, Delta, Facts, OutOfRange, ProNote, Rows, useCountUp, Versus } from './parts';
 
 const REFRESH_MS = 60_000;
 
@@ -142,13 +142,21 @@ function Dashboard() {
             <nav className="sections" aria-label="Secciones">
 
                 {SECTIONS.map(({ id, label, Icon }) => <button key={id} aria-current={section === id ? 'page' : undefined} onClick={() => { setSection(id); setMore(false); }}><Icon size={20} aria-hidden="true" /><span>{label}</span></button>)}
-                <button aria-current={MORE.some(m => m.id === section) ? 'page' : undefined} aria-expanded={more} aria-haspopup="menu" onClick={() => setMore(!more)}><Ellipsis size={20} aria-hidden="true" /><span>{MORE.find(m => m.id === section)?.label ?? 'Más'}</span></button>
+                <button className="more-toggle" aria-current={MORE.some(m => m.id === section) ? 'page' : undefined} aria-expanded={more} aria-haspopup="menu" onClick={() => setMore(!more)}><Ellipsis size={20} aria-hidden="true" /><span>{MORE.find(m => m.id === section)?.label ?? 'Más'}</span></button>
                 {more && <div className="more" role="menu" aria-label="Más secciones">{MORE.map(({ id, label, Icon }) => <button key={id} role="menuitem" aria-current={section === id ? 'page' : undefined} onClick={() => { setSection(id); setMore(false); }}><Icon size={18} aria-hidden="true" /><span>{label}</span>{id === 'alerts' && alertCount > 0 && <span className="count">{alertCount}</span>}</button>)}</div>}
+                {/* On the desk every section has its own line in the sidebar, so «Más» steps aside. */}
+                <p className="side-group" aria-hidden="true">Análisis</p>
+                {MORE.map(({ id, label, Icon }) => <button key={`side-${id}`} className="side-item" aria-current={section === id ? 'page' : undefined} onClick={() => { setSection(id); setMore(false); }}><Icon size={20} aria-hidden="true" /><span>{label}</span>{id === 'alerts' && alertCount > 0 && <span className="count">{alertCount}</span>}</button>)}
 
             </nav>
-            <button className="icon bell" onClick={() => { setSection('alerts'); setMore(false); }} aria-label={alertCount ? `Alertas: ${alertCount} por atender` : 'Alertas'}><Bell size={18} />{alertCount > 0 && <span className="count" aria-hidden="true">{alertCount}</span>}</button>
-            <button className="icon" onClick={() => void load()} disabled={loading} aria-label="Actualizar"><RefreshCw size={18} className={loading ? 'spin' : ''} /></button>
-            <button className="icon" onClick={() => void api.logout()} aria-label={`Cerrar sesión de ${view?.me.account.email ?? 'tu cuenta'}`}><LogOut size={18} /></button>
+            <div className="tools">
+
+                <button className="icon bell" onClick={() => { setSection('alerts'); setMore(false); }} aria-label={alertCount ? `Alertas: ${alertCount} por atender` : 'Alertas'}><Bell size={18} />{alertCount > 0 && <span className="count" aria-hidden="true">{alertCount}</span>}</button>
+                <button className="icon" onClick={() => void load()} disabled={loading} aria-label="Actualizar"><RefreshCw size={18} className={loading ? 'spin' : ''} /></button>
+                <button className="icon" onClick={() => void api.logout()} aria-label={`Cerrar sesión de ${view?.me.account.email ?? 'tu cuenta'}`}><LogOut size={18} /></button>
+
+            </div>
+            {view && <p className="account"><span className="avatar" aria-hidden="true">{view.me.account.email.slice(0, 2).toUpperCase()}</span><span><b>{view.me.account.email}</b><small>{view.me.account.role === 'owner' ? 'Dueño' : 'Gerente'} · {plural(view.me.branches.length, 'sucursal', 'sucursales')}</small></span></p>}
 
         </header>
         <div className="controls">
@@ -217,6 +225,16 @@ function Content({ view, period, choose, chosen, by, chooseBy }: { view: View; p
     return <SummaryView view={view} data={data} period={period} choose={choose} chosen={chosen} />;
 }
 
+/** The day's figure as it climbs, with the cents set smaller so the pesos read first. */
+function Figure({ value }: { value: number }) {
+
+    const shown = money(useCountUp(value)), dot = shown.lastIndexOf('.');
+
+    return <p className="figure">{shown.slice(0, dot)}<small>{shown.slice(dot)}</small></p>;
+}
+
+type Stat = { label: string; value: string; now?: number; was?: number; shown: (v: number) => string };
+
 function SummaryView({ view, data, period, choose, chosen }: { view: View; data: Extract<Data, { section: 'summary' }>; period: Period; choose: (licenseId: string) => void; chosen: string }) {
 
     const { span, loadedAt } = view, { summary, before } = data;
@@ -232,43 +250,82 @@ function SummaryView({ view, data, period, choose, chosen }: { view: View; data:
     const dropped = before.outOfRange.filter(id => !summary.outOfRange.includes(id));
     const comparable = dropped.length ? scope.filter(b => !dropped.includes(b.licenseId)).reduce((total, b) => total + b.net, 0) : totals.net;
     const against = `${shown.before} (${rangeLabel(before)})${dropped.length ? `, sin ${branchNames(view.me.branches, dropped)}` : ''}`;
+    const [metric, setMetric] = useState<Metric>('net');
+    const metrics = METRICS.filter(m => m.id !== 'people' || summary.hours.some(h => h.people !== undefined));
+    const beforeName = today ? 'Ayer' : period === 'yesterday' ? 'Semana pasada' : 'Antes';
+    // Green and red only where both sides hold the same stretch and the same branches; today meets yesterday hour by hour.
+    const fair = !today && !dropped.length;
 
-    return <main className="report">
+    // Today meets the earlier day only on the hours already over, so a day in progress is not set against a whole one.
+    const upTo = (hours: api.HourRow[], read: (h: api.HourRow) => number) => hours.filter(h => dayOrder(h.hour, cutoff) < dayOrder(clock, cutoff)).reduce((t, h) => t + read(h), 0);
+    const side = today
+        ? { tickets: [upTo(summary.hours, h => h.tickets), upTo(before.hours, h => h.tickets)], people: [upTo(summary.hours, h => h.people ?? 0), upTo(before.hours, h => h.people ?? 0)], net: [upTo(summary.hours, h => h.net), upTo(before.hours, h => h.net)], note: `ayer antes de las ${hourLabel(clock)}` }
+        : fair ? { tickets: [totals.tickets, before.totals.tickets], people: [totals.people, before.totals.people], net: [totals.net, before.totals.net], note: shown.before } : null;
+    const ticketOf = (net: number, tickets: number) => tickets ? Math.round(net / tickets) : 0;
+    const stats: Stat[] = [
+        { label: 'Cuentas', value: whole(totals.tickets), now: side?.tickets[0], was: side?.tickets[1], shown: whole },
+        { label: 'Ticket promedio', value: money(totals.averageTicket), now: side ? ticketOf(side.net[0]!, side.tickets[0]!) : undefined, was: side ? ticketOf(side.net[1]!, side.tickets[1]!) : undefined, shown: money },
+        { label: 'Comensales', value: whole(totals.people), now: side?.people[0], was: side?.people[1], shown: whole }
+    ];
 
-        <section className="headline" aria-label={headline}>
+    return <main className="report summary">
 
-            <h1>{headline}</h1>
-            <p className="figure">{money(totals.net)}</p>
-            {today
-                ? <Versus now={soFar(summary.hours, clock, cutoff)} before={soFar(before.hours, clock, cutoff)} against={`ayer antes de las ${hourLabel(clock)}`} />
-                : <Versus now={comparable} before={before.totals.net} against={against} />}
-            <Facts items={[['Cuentas', whole(totals.tickets)], ['Ticket promedio', money(totals.averageTicket)], ['Comensales', whole(totals.people)]]} />
+        <section className="headline hero" aria-label={headline}>
+
+            <div className="hero-top">
+
+                <div>
+
+                    <h1>{today && <span className="live-dot" aria-hidden="true" />}{headline}</h1>
+                    <Figure value={totals.net} />
+                    {today
+                        ? <Versus now={soFar(summary.hours, clock, cutoff)} before={soFar(before.hours, clock, cutoff)} against={`ayer antes de las ${hourLabel(clock)}`} />
+                        : <Versus now={comparable} before={before.totals.net} against={against} />}
+
+                </div>
+                {oneDay && summary.hours.length > 0 && metrics.length > 1 && <div className="metric-tabs" role="group" aria-label="Cifra de la gráfica">{metrics.map(m => <button key={m.id} aria-pressed={metric === m.id} onClick={() => setMetric(m.id)}>{m.label}</button>)}</div>}
+
+            </div>
             <Behind rows={scope.filter(b => summary.partial.includes(b.licenseId))} loadedAt={loadedAt} />
             <OutOfRange branches={view.me.branches} ids={summary.outOfRange} />
+            {oneDay
+                ? (summary.hours.length ? <Hours hours={summary.hours} cutoff={cutoff} now={today ? clock : null} metric={metric} before={before.hours} beforeLabel={beforeName} /> : <p className="quiet">Sin ventas cerradas en este periodo.</p>)
+                : <div className="hero-chart"><h2>Por día</h2>{summary.days.length ? <Days days={summary.days} span={span} /> : <p className="quiet">Sin ventas cerradas en este periodo.</p>}</div>}
 
         </section>
+        <div className="stats">{stats.map(s => <section className="stat" key={s.label} aria-label={s.label}>
+
+            <span className="stat-label">{s.label}</span>
+            <span className="stat-value">{s.value}</span>
+            {s.now !== undefined && s.was !== undefined && <span className="stat-cmp"><Delta now={s.now} before={s.was} shown={s.shown} /><span>{s.shown(s.now)} contra {s.shown(s.was)} {side!.note}</span></span>}
+
+        </section>)}</div>
         <div className="col">
 
             <GoalsBlock goals={data.goals} />
-            {!oneDay && <Block title="Por día" className="hours-block">{summary.days.length ? <Days days={summary.days} span={span} /> : <p className="quiet">Sin ventas cerradas en este periodo.</p>}</Block>}
-            <Block title={oneDay ? 'Por hora' : 'Horas pico'} className="hours-block">
+            {today && <Now rows={scope} />}
+            {!oneDay && <Block title="Horas pico" className="hours-block">
 
-                {oneDay || !onlyLite ? summary.hours.length ? <Hours hours={summary.hours} cutoff={cutoff} now={today ? clock : null} /> : <p className="quiet">Sin ventas cerradas en este periodo.</p> : null}
-                {!oneDay && <ProNote branches={view.scope} lite={summary.lite} locked="Las horas pico de varios días son del plan Pro." />}
+                {!onlyLite ? summary.hours.length ? <Hours hours={summary.hours} cutoff={cutoff} now={null} /> : <p className="quiet">Sin ventas cerradas en este periodo.</p> : null}
+                <ProNote branches={view.scope} lite={summary.lite} locked="Las horas pico de varios días son del plan Pro." />
 
-            </Block>
+            </Block>}
+            <ShiftsBlock shifts={summary.shifts} />
 
         </div>
         <div className="col">
 
-            {(scope.length > 1 || chosen) && <Branches rows={scope} all={!chosen} today={today} choose={choose} loadedAt={loadedAt} />}
-            {today && <Now rows={scope} />}
-            <ShiftsBlock shifts={summary.shifts} />
+            {(scope.length > 1 || chosen) && <Branches rows={scope} all={!chosen} today={today} choose={choose} loadedAt={loadedAt} before={fair ? before.branches : null} />}
+            {channels.length > 1 && <Block title="Por canal"><Rows label="Ventas por canal" rows={channels.map(c => ({ key: c.channel, name: channelLabel(c.channel), value: c.net, note: <>{plural(c.tickets, 'cuenta', 'cuentas')} · {percent(c.net, sum(channels, x => x.net))}{fair && <Delta now={c.net} before={before.channels.find(b => b.channel === c.channel)?.net ?? 0} />}</> }))} /><ProNote branches={view.scope} lite={summary.lite} locked="" /></Block>}
             <AreasBlock areas={summary.areas} />
-            {channels.length > 1 && <Block title="Por canal"><Rows label="Ventas por canal" rows={channels.map(c => ({ key: c.channel, name: channelLabel(c.channel), value: c.net, note: `${plural(c.tickets, 'cuenta', 'cuentas')} · ${percent(c.net, sum(channels, x => x.net))}` }))} /><ProNote branches={view.scope} lite={summary.lite} locked="" /></Block>}
-            {totals.tickets > 0 && !onlyLite && <Block title="Descuentos y cancelaciones">
+            {totals.tickets > 0 && !onlyLite && <Block title="Descuentos y cancelaciones" className="adjust">
 
-                <Facts items={[['Descuentos', money(totals.discounts)], ['Cancelaciones', `${whole(totals.voidedCount)} · ${money(totals.voidedAmount)}`], ['Cortesías', whole(totals.comps)], ['Comidas de empleados', whole(totals.staffMeals)]]} />
+                <Facts items={[
+                    ['Descuentos', <>{money(totals.discounts)}{fair && <Delta now={totals.discounts} before={before.totals.discounts} good={-1} />}</>],
+                    ['Cancelaciones', <>{whole(totals.voidedCount)} · {money(totals.voidedAmount)}{fair && <Delta now={totals.voidedAmount} before={before.totals.voidedAmount} good={-1} />}</>],
+                    ['Cortesías', <>{whole(totals.comps)}{fair && <Delta now={totals.comps} before={before.totals.comps} good={-1} shown={whole} />}</>],
+                    ['Comidas de empleados', whole(totals.staffMeals)]
+                ]} />
                 <ProNote branches={view.scope} lite={summary.lite} locked="" />
 
             </Block>}
@@ -278,11 +335,11 @@ function SummaryView({ view, data, period, choose, chosen }: { view: View; data:
     </main>;
 }
 
-function Branches({ rows, all, today, choose, loadedAt }: { rows: api.Summary['branches']; all: boolean; today: boolean; choose: (licenseId: string) => void; loadedAt: number }) {
+function Branches({ rows, all, today, choose, loadedAt, before }: { rows: api.Summary['branches']; all: boolean; today: boolean; choose: (licenseId: string) => void; loadedAt: number; before: api.Summary['branches'] | null }) {
 
     const top = Math.max(...rows.map(r => r.net), 1);
 
-    return <section className="block">
+    return <section className="block branches">
 
         <h2>{all ? 'Sucursales' : 'Sucursal'}</h2>
         <ol className="ranking">{rows.map(b => {
@@ -290,9 +347,9 @@ function Branches({ rows, all, today, choose, loadedAt }: { rows: api.Summary['b
             const body = <>
 
                 <span className="rank-name">{b.name}</span>
-                <span className="rank-net">{b.hasData ? money(b.net) : 'Sin datos'}</span>
+                <span className="rank-net">{b.hasData ? money(b.net) : 'Sin datos'}{b.hasData && before && <Delta now={b.net} before={before.find(x => x.licenseId === b.licenseId)?.net ?? 0} />}</span>
                 <span className="rank-bar">{b.net > 0 && <span style={{ width: `${b.net / top * 100}%` }} />}</span>
-                <span className={b.stale ? 'rank-state late' : 'rank-state'}>{b.stale ? <CircleAlert size={14} aria-hidden="true" /> : <i aria-hidden="true" />}{b.stale ? 'Sin contacto' : 'En línea'} · {seenAt(b.lastSeenAt, loadedAt)}{today && b.live && !b.stale ? ` · ${plural(b.live.openAccounts, 'cuenta abierta', 'cuentas abiertas')}` : ''}</span>
+                <span className={b.stale ? 'rank-state late' : 'rank-state'}>{b.stale ? <CircleAlert size={14} aria-hidden="true" /> : <i className="live-dot" aria-hidden="true" />}{b.stale ? 'Sin contacto' : 'En línea'} · {seenAt(b.lastSeenAt, loadedAt)}{today && b.live && !b.stale ? ` · ${plural(b.live.openAccounts, 'cuenta abierta', 'cuentas abiertas')}` : ''}</span>
 
             </>;
 

@@ -4,7 +4,7 @@ import type * as api from './api';
 import type { View } from './app';
 import { branchOf, Headline, Locked, sum, type Of } from './detail';
 import { bps, dayName, duration, hourLabel, hoursWorked, kindLabel, modeLabel, money, plural, shortDate, tenths, WEEKDAYS, whole } from './format';
-import { allLite, Block, Facts, ProNote, Rows } from './parts';
+import { allLite, Block, Delta, Facts, ProNote, Rows } from './parts';
 
 // The second half of the panel: goals, shifts and areas on the summary, and the Pro areas built on what the branches
 // measure beyond the sale. Every figure comes from the server; the app only words it.
@@ -25,12 +25,41 @@ function Progress({ name, value, of, note }: { name: string; value: number; of: 
 
 const pace = (g: api.Goal) => g.pace === 'reached' ? 'Meta cumplida.' : g.pace === 'open' ? `Faltan ${money(g.target - g.actual)}.` : g.pace === 'ahead' ? `Vas adelantado: a este ritmo cerrarías en ${money(g.projected)}.` : g.pace === 'close' ? `Vas casi al ritmo: cerrarías en ${money(g.projected)}.` : `Vas atrasado: a este ritmo cerrarías en ${money(g.projected)}.`;
 
+const ARC_R = 92, ARC = Math.PI * ARC_R;
+const arcPoint = (share: number, r: number) => [120 - r * Math.cos(Math.PI * share), 112 - r * Math.sin(Math.PI * share)] as const;
+
+/** The first goal as an arc: amber for what is sold, a dark tick where an even pace would be today. */
+function Gauge({ goal }: { goal: api.Goal }) {
+
+    const share = goal.target ? Math.min(1, goal.actual / goal.target) : 0;
+    const due = goal.target && goal.expected ? Math.min(1, goal.expected / goal.target) : null;
+    const [sx, sy] = arcPoint(0, ARC_R), [ex, ey] = arcPoint(1, ARC_R), path = `M${sx} ${sy} A${ARC_R} ${ARC_R} 0 0 1 ${ex} ${ey}`;
+    const tick = due === null ? null : [arcPoint(due, ARC_R - 15), arcPoint(due, ARC_R + 15)] as const;
+
+    return <div className="gauge">
+
+        <svg viewBox="0 0 240 124" role="img" aria-label={`${PERIOD_NAME[goal.period]}: ${bps(goal.progressBps)} de ${money(goal.target)}`}>
+
+            <path d={path} className="gauge-track" />
+            <path d={path} className="gauge-fill" style={{ strokeDasharray: ARC, strokeDashoffset: ARC * (1 - share) }} />
+            {tick && <line x1={tick[0][0]} y1={tick[0][1]} x2={tick[1][0]} y2={tick[1][1]} className="gauge-due" />}
+
+        </svg>
+        <div className="gauge-center"><b>{bps(goal.progressBps)}</b><small>{PERIOD_NAME[goal.period].toLowerCase()}</small></div>
+        {goal.pace !== 'open' && goal.pace !== 'reached' && goal.expected > 0 && <p className="gauge-pace"><Delta now={goal.actual} before={goal.expected} /><span>contra el ritmo parejo</span></p>}
+
+    </div>;
+}
+
 export function GoalsBlock({ goals }: { goals: api.Goals | null }) {
 
     if (!goals) return null;
 
-    return <Block title="Metas">
+    const first = goals.goals[0];
 
+    return <Block title="Metas" className="goals">
+
+        {first && <Gauge goal={first} />}
         {goals.goals.length
             ? <ol className="progress" aria-label="Avance de metas">{goals.goals.map((g, i) => <Progress key={i} name={`${PERIOD_NAME[g.period]}${g.branchName ? ` · ${g.branchName}` : ''}`} value={g.actual} of={g.target} note={<>{money(g.actual)} de {money(g.target)}. {pace(g)}</>} />)}</ol>
             : <p className="quiet">Sin metas. El dueño las define en Ajustes.</p>}

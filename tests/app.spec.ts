@@ -11,6 +11,15 @@ const hours = [[13, 4, 182500], [14, 11, 512000], [15, 9, 421050], [19, 6, 26790
 
 let saved: any[] = [];
 
+/** On the phone the other sections hide under «Más»; on the desk each one has its own line in the sidebar. */
+async function openMore(page: Page, name: string) {
+
+    const toggle = page.locator('.sections > button[aria-haspopup="menu"]');
+
+    if (await toggle.isVisible()) { await toggle.click(); await page.getByRole('menuitem', { name }).click(); }
+    else await page.locator('.sections > .side-item').filter({ hasText: name }).click();
+}
+
 async function mock(page: Page, { branches = [centro, norte, nueva], signedIn = true }: { branches?: any[]; signedIn?: boolean } = {}) {
 
     const calls: string[] = [];
@@ -123,9 +132,9 @@ test('consolidado con todas las sucursales, y aviso de la que va atrasada', asyn
     await expect(page.getByText('Cuentas', { exact: true }).first()).toBeVisible();
     await expect(page.locator('.behind')).toHaveCount(2);
     await expect(page.locator('.behind').first()).toContainText('Polanco Norte con nombre largo');
-    await expect(page.locator('.ranking li').first()).toContainText('$14,494.75');
-    await expect(page.locator('.ranking li').nth(2)).toContainText('Nunca se ha conectado');
-    await expect(page.locator('.ranking li').nth(1)).not.toContainText('abierta');
+    await expect(page.locator('.branches .ranking li').first()).toContainText('$14,494.75');
+    await expect(page.locator('.branches .ranking li').nth(2)).toContainText('Nunca se ha conectado');
+    await expect(page.locator('.branches .ranking li').nth(1)).not.toContainText('abierta');
     await expect(page.locator('.versus')).toContainText('Lo mismo que ayer');
 
 });
@@ -362,7 +371,7 @@ for (const [name, width, height] of [['telefono', 360, 760], ['escritorio', 1280
     for (const section of ['Resumen', 'Productos', 'Caja', 'Personal', 'Tendencia', 'Pronóstico', 'Rentabilidad', 'Cocina', 'Clientes', 'Alertas', 'Ajustes']) {
 
         if (['Resumen', 'Productos', 'Caja', 'Personal'].includes(section)) await page.locator('.sections > button').filter({ hasText: section }).click();
-        else { await page.locator('.sections > button[aria-haspopup="menu"]').click(); await page.getByRole('menuitem', { name: section }).click(); }
+        else await openMore(page, section);
         await expect(page.locator('main h1')).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), section).toBe(true);
         for (const target of await page.locator('main button, .controls button, .controls select, .top button').all()) { const box = await target.boundingBox(); if (box && !(await target.evaluate(e => e.closest('.hours-plot')))) expect(box.height, await target.innerText()).toBeGreaterThanOrEqual(40); }
@@ -456,7 +465,7 @@ test('«Más» abre tendencia, pronóstico, rentabilidad, cocina, clientes y ale
 
     const calls = await mock(page);
     await page.goto('/');
-    const more = async (name: string) => { await page.locator('.sections > button[aria-haspopup="menu"]').click(); await page.getByRole('menuitem', { name }).click(); };
+    const more = (name: string) => openMore(page, name);
 
     await more('Tendencia');
     await expect(page.locator('.figure')).toHaveText('$9,000.00');
@@ -494,8 +503,7 @@ test('ajustes: el dueño cambia turnos, metas y gastos fijos y busca la ciudad',
 
     await mock(page);
     await page.goto('/');
-    await page.locator('.sections > button[aria-haspopup="menu"]').click();
-    await page.getByRole('menuitem', { name: 'Ajustes' }).click();
+    await openMore(page, 'Ajustes');
     await page.getByRole('button', { name: 'Agregar turno' }).click();
     await page.getByLabel('Meta en pesos').fill('600000');
     await page.getByLabel('Ciudad').first().fill('Monterrey');
@@ -513,8 +521,7 @@ test('sólo con sucursales Lite, las áreas nuevas también lo dicen', async ({ 
 
     await mock(page, { branches: [{ ...centro, tier: 'lite' }] });
     await page.goto('/');
-    await page.locator('.sections > button[aria-haspopup="menu"]').click();
-    await page.getByRole('menuitem', { name: 'Cocina' }).click();
+    await openMore(page, 'Cocina');
     await expect(page.getByRole('heading', { name: 'Cocina es del plan Pro' })).toBeVisible();
 
 });

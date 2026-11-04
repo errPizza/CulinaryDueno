@@ -1,16 +1,66 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowDownRight, ArrowUpRight, CircleAlert, Equal } from 'lucide-react';
 import type { Branch } from './api';
 import { change, money, seenAt } from './format';
 
 export type Row = { key: string; name: string; value: number; note?: ReactNode };
 
-/** Lines of the closing slip: a name, its figure and a bar measured against the largest one. */
+const still = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** A figure that climbs from the value it showed before, so a new sale is seen arriving. The first time it climbs from zero. */
+export function useCountUp(value: number, ms = 900) {
+
+    const [shown, setShown] = useState(still() ? value : 0);
+    const from = useRef(still() ? value : 0);
+
+    useEffect(() => {
+
+        if (still() || from.current === value) { from.current = value; setShown(value); return; }
+
+        const start = performance.now(), origin = from.current;
+        let frame = 0;
+        const step = (t: number) => {
+
+            const k = Math.min(1, (t - start) / ms), eased = 1 - Math.pow(1 - k, 4);
+
+            setShown(Math.round(origin + (value - origin) * eased));
+            if (k < 1) frame = requestAnimationFrame(step); else from.current = value;
+
+        };
+
+        frame = requestAnimationFrame(step);
+
+        return () => { cancelAnimationFrame(frame); from.current = value; };
+
+    }, [value, ms]);
+
+    return shown;
+}
+
+/**
+ * A change against the earlier stretch as a pill: green when it went the good way, red when it went the bad way, grey when
+ * nothing moved. `good` is 1 when going up is good (sales) and −1 when going down is (cancellations, discounts).
+ */
+export function Delta({ now, before, good = 1, shown = money, percent = false }: { now: number; before: number; good?: 1 | -1; shown?: (value: number) => string; percent?: boolean }) {
+
+    const moved = now - before, kind = moved === 0 ? 'flat' : moved * good > 0 ? 'good' : 'bad';
+    const Arrow = moved > 0 ? ArrowUpRight : moved < 0 ? ArrowDownRight : Equal;
+    const rate = percent ? change(now, before) : null;
+
+    return <span className={`pill ${kind}`}>
+
+        <Arrow size={14} strokeWidth={2.5} aria-hidden="true" />
+        {moved === 0 ? 'Igual' : `${moved > 0 ? '+' : '−'}${shown(Math.abs(moved))}`}{rate !== null && moved !== 0 && ` · ${moved > 0 ? '+' : '−'}${Math.abs(rate).toLocaleString('es-MX')} %`}
+
+    </span>;
+}
+
+/** Lines of the closing slip: a name, its figure and a bar measured against the largest one, which carries the amber. */
 export function Rows({ rows, shown = money, label }: { rows: Row[]; shown?: (value: number) => string; label?: string }) {
 
     const top = Math.max(...rows.map(r => r.value), 1);
 
-    return <ol className="ranking" aria-label={label}>{rows.map(r => <li key={r.key}><div>
+    return <ol className="ranking" aria-label={label}>{rows.map(r => <li key={r.key} className={r.value === top ? 'top-row' : undefined}><div>
 
         <span className="rank-name">{r.name}</span>
         <span className="rank-net">{shown(r.value)}</span>
@@ -59,10 +109,9 @@ export function Versus({ now, before, against }: { now: number; before: number; 
 
     if (moved === null) return null;
 
-    const Arrow = moved > 0 ? ArrowUpRight : moved < 0 ? ArrowDownRight : Equal;
     const said = moved === 0 ? `Lo mismo que ${against}` : `${Math.abs(moved).toLocaleString('es-MX')} % ${moved > 0 ? 'más' : 'menos'} que ${against}`;
 
-    return <p className="versus"><Arrow size={18} aria-hidden="true" /><span>{said}: {money(now)} contra {money(before)}</span></p>;
+    return <div className="versus"><Delta now={now} before={before} /><span>{said}: {money(now)} contra {money(before)}</span></div>;
 }
 
 export function Block({ title, children, className }: { title: string; children: ReactNode; className?: string }) {

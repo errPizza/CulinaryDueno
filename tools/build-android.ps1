@@ -1,6 +1,6 @@
 ﻿# Compila el APK de Android (ARM64) con Tauri. Necesita JDK 17, el SDK y el NDK de Android y el objetivo
 # aarch64-linux-android de Rust; reutiliza por defecto la caja de herramientas de MesaNexoNativo.
-param([string]$Tools=(Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'MesaNexoNativo/.tools'),[switch]$Release,[string]$ServerUrl='',[string]$ProviderName='',[string]$PrivacyEmail='')
+param([string]$Tools=(Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'MesaNexoNativo/.tools'),[switch]$Release,[string]$ServerUrl='',[string]$ProviderName='',[string]$PrivacyEmail='',[string]$Keys=(Join-Path $env:USERPROFILE '.culinary-firma'))
 $ErrorActionPreference='Stop'
 $env:VITE_SERVER_URL=$ServerUrl
 # Quien responde por los datos, para el aviso de privacidad de la app.
@@ -33,7 +33,7 @@ try{
     if($Release){
         # Signed with the Culinary key (MesaNexoNativo/tools/New-SigningKeys.ps1), kept outside the repository.
         $bt=Get-ChildItem (Join-Path $env:ANDROID_HOME 'build-tools') -Directory | Sort-Object Name -Descending | Select-Object -First 1
-        $keys=Join-Path $env:USERPROFILE '.culinary-firma'
+        $keys=$Keys
         New-Item -ItemType Directory -Force 'dist-android' | Out-Null
         $pass=(Get-Content (Join-Path $keys 'android.pass') -Raw).Trim()
         $unsigned=Get-ChildItem 'src-tauri/gen/android/app/build/outputs/apk' -Recurse -Filter '*release-unsigned.apk' | Select-Object -First 1
