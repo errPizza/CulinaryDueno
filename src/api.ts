@@ -195,3 +195,13 @@ export const alerts = byBranch<Alerts>('alerts');
 export const settings = () => request<{ settings: Settings; canEdit: boolean }>('GET', '/owner/v1/settings');
 export const saveSettings = (value: Settings) => request<{ settings: Settings; canEdit: boolean }>('PUT', '/owner/v1/settings', value);
 export const geocode = (q: string) => request<{ places: { label: string; lat: number; lon: number }[] }>('GET', `/owner/v1/geocode?q=${encodeURIComponent(q)}`);
+export type Message = { id: string; licenseId: string; author: 'owner' | 'branch'; name: string; body: string; toAll: boolean; createdAt: string };
+export type SupportMessage = { id: string; author: 'owner' | 'admin' | 'branch'; body: string; createdAt: string };
+export type SupportTicket = { id: string; licenseId: string; subject: string; status: 'open' | 'answered' | 'closed'; createdAt: string; updatedAt: string; messages: SupportMessage[] };
+export type Inbox = { branches: { licenseId: string; last: Message | null; unread: number }[]; support: SupportTicket[] };
+export const inbox = () => request<Inbox>('GET', '/owner/v1/messages');
+export const branchThread = (licenseId: string) => request<{ messages: Message[] }>('GET', `/owner/v1/messages/branches/${encodeURIComponent(licenseId)}`);
+/** An empty list writes to every branch this account reads. */
+export const sendToBranches = (licenseIds: string[], message: string) => request<{ sent: number; at: string }>('POST', '/owner/v1/messages/branches', { licenseIds, message });
+export const askSupport = (subject: string, message: string, licenseId?: string) => request<{ ticket: SupportTicket }>('POST', '/owner/v1/support', { subject, message, ...(licenseId ? { licenseId } : {}) });
+export const replySupport = (id: string, message: string) => request<{ ticket: SupportTicket }>('POST', `/owner/v1/support/${encodeURIComponent(id)}/messages`, { message });

@@ -9,7 +9,10 @@ const totals = (net: number, tickets: number) => ({ tickets, people: tickets * 2
 const back = (days: number) => new Date(Date.parse(local) - days * 86_400_000).toISOString().slice(0, 10);
 const hours = [[13, 4, 182500], [14, 11, 512000], [15, 9, 421050], [19, 6, 267900], [1, 2, 66025]].map(([hour, tickets, net]) => ({ hour, tickets, net }));
 
-let saved: any[] = [];
+let saved: any[] = [], posted: { path: string; body: any }[] = [];
+const ticket = { id: 't1', licenseId: 'c', subject: 'Factura de octubre', status: 'answered', createdAt: seen(120), updatedAt: seen(30), messages: [{ id: 'm1', author: 'owner', body: '¿Cuándo llega?', createdAt: seen(120) }, { id: 'm2', author: 'admin', body: 'Hoy en la tarde.', createdAt: seen(30) }] };
+const inbox = { branches: [{ licenseId: 'c', unread: 2, last: { id: 'b2', licenseId: 'c', author: 'branch', name: 'Ana López', body: 'Ya llegó el gas', toAll: false, createdAt: seen(5) } }, { licenseId: 'n', unread: 0, last: null }, { licenseId: 'z', unread: 0, last: null }], support: [ticket] };
+const thread = [{ id: 'o1', licenseId: 'c', author: 'owner', name: 'Dueño · dueno@ejemplo.mx', body: 'Junta el lunes', toAll: true, createdAt: seen(60) }, { id: 'b2', licenseId: 'c', author: 'branch', name: 'Ana López', body: 'Ya llegó el gas', toAll: false, createdAt: seen(5) }];
 
 /** On the phone the other sections hide under «Más»; on the desk each one has its own line in the sidebar. */
 async function openMore(page: Page, name: string) {
@@ -24,7 +27,7 @@ async function mock(page: Page, { branches = [centro, norte, nueva], signedIn = 
 
     const calls: string[] = [];
 
-    saved = [];
+    saved = []; posted = [];
 
     await page.route('https://servidor.test/**', async route => {
 
@@ -42,6 +45,20 @@ async function mock(page: Page, { branches = [centro, norte, nueva], signedIn = 
         if (url.pathname === '/owner/v1/logout') return reply({ ok: true });
         if (url.pathname === '/owner/v1/enroll') return reply({ email: 'nuevo@ejemplo.mx', totp: { secret: 'JBSWY3DPEHPK3PXP', uri: 'otpauth://totp/x?secret=JBSWY3DPEHPK3PXP' } }, 201);
         if (url.pathname === '/owner/v1/enroll/confirm') return reply({ email: 'nuevo@ejemplo.mx' });
+
+        if (url.pathname === '/owner/v1/messages') return reply(inbox);
+        if (url.pathname.startsWith('/owner/v1/messages/branches/')) return reply({ messages: thread });
+        if (route.request().method() === 'POST' && (url.pathname.startsWith('/owner/v1/messages') || url.pathname.startsWith('/owner/v1/support'))) {
+
+            const body = route.request().postDataJSON();
+
+            posted.push({ path: url.pathname, body });
+            if (url.pathname === '/owner/v1/messages/branches') return reply({ sent: body.licenseIds.length || branches.length, at: seen(0) }, 201);
+            if (url.pathname === '/owner/v1/support') return reply({ ticket: { ...ticket, id: 't2', subject: body.subject, status: 'open', messages: [{ id: 'm3', author: 'owner', body: body.message, createdAt: seen(0) }] } }, 201);
+
+            return reply({ ticket }, 201);
+
+        }
 
         const chosen = url.searchParams.get('branch');
         const from = url.searchParams.get('from')!, to = url.searchParams.get('to')!;
@@ -147,7 +164,7 @@ test('una sucursal se elige en el selector o en la lista, y se vuelve a todas', 
     await page.locator('.ranking button').first().click();
     await expect(page.locator('.figure')).toHaveText('$14,494.75');
     await expect(page.locator('.picker select')).toHaveValue('c');
-    expect(calls.at(-1)).toContain('branch=c');
+    expect(calls.filter(c => c.startsWith('/owner/v1/stats/')).at(-1)).toContain('branch=c');
     await page.getByRole('button', { name: 'Ver todas las sucursales' }).click();
     await expect(page.locator('.figure')).toHaveText('$17,705.50');
 
@@ -267,7 +284,7 @@ test('sólo con sucursales Lite, las áreas Pro lo dicen en vez de mostrar ceros
     await mock(page, { branches: [lite(centro)] });
     await page.goto('/');
     await expect(page.locator('.figure')).toHaveText('$14,494.75');
-    await expect(page.getByRole('button', { name: 'Fechas' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Fechas/ })).toHaveAttribute('aria-disabled', 'true');
     await expect(page.getByRole('heading', { name: 'Descuentos y cancelaciones' })).toHaveCount(0);
     await page.getByRole('button', { name: '7 días' }).click();
     await expect(page.getByText('Las horas pico de varios días son del plan Pro.')).toBeVisible();
@@ -554,5 +571,96 @@ test('mientras carga hay esqueletos, y sin ventas las gráficas se ven vacías',
     await expect(page.getByRole('heading', { name: 'Por turno' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Descuentos y cancelaciones' })).toBeVisible();
     await page.screenshot({ path: 'test-results/sin-ventas.png', fullPage: true });
+
+});
+
+test('sólo con Lite, las áreas Pro salen bloqueadas al instante, sin cargar ni pedir sus cifras', async ({ page }) => {
+
+    const calls = await mock(page, { branches: [lite(centro)] });
+
+    await page.goto('/');
+    await expect(page.locator('.figure')).toHaveText('$14,494.75');
+    await expect(page.getByRole('button', { name: 'Caja' })).toContainClass('is-locked');
+    await expect(page.getByRole('button', { name: 'Productos' })).not.toContainClass('is-locked');
+    await page.route('https://servidor.test/owner/v1/stats/cash**', route => new Promise(() => { void route; }));
+    await page.getByRole('button', { name: 'Caja' }).click();
+    await expect(page.getByRole('heading', { name: 'Caja es del plan Pro' })).toBeVisible();
+    await expect(page.locator('.loading')).toHaveCount(0);
+    await expect(page.locator('.periods')).toHaveCount(0);
+    await openMore(page, 'Tendencia');
+    await expect(page.getByRole('heading', { name: 'Tendencia es del plan Pro' })).toBeVisible();
+    expect(calls.some(c => /stats\/(cash|staff|closings|trend)/.test(c))).toBe(false);
+    await openMore(page, 'Mensajes');
+    await expect(page.getByRole('heading', { name: 'Mensajes', exact: true })).toBeVisible();
+
+});
+
+test('con planes mixtos nada se bloquea, salvo al elegir la sucursal Lite', async ({ page }) => {
+
+    await mock(page, { branches: [centro, lite(norte)] });
+    await page.goto('/');
+    await expect(page.locator('.figure')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Caja' })).not.toContainClass('is-locked');
+    await page.locator('.picker select').selectOption('n');
+    await expect(page.getByRole('button', { name: 'Caja' })).toContainClass('is-locked');
+    await page.getByRole('button', { name: 'Caja' }).click();
+    await expect(page.getByRole('heading', { name: 'Caja es del plan Pro' })).toBeVisible();
+
+});
+
+test('mensajes: lista de sucursales con no leídos, conversación y respuesta', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await expect(page.locator('.figure')).toBeVisible();
+    await openMore(page, 'Mensajes');
+    const list = page.getByRole('list', { name: 'Conversaciones con sucursales' });
+    await expect(list.locator('li')).toHaveCount(3);
+    await expect(list.locator('li').first()).toContainText('Ya llegó el gas');
+    await expect(list.getByLabel('2 mensajes sin leer')).toBeVisible();
+    await list.getByRole('button', { name: /Centro/ }).click();
+    await expect(page.getByRole('heading', { name: 'Centro' })).toBeVisible();
+    await expect(page.locator('.bubble.mine')).toContainText('Junta el lunes');
+    await expect(page.locator('.bubble.mine small')).toContainText('A todas las sucursales');
+    await expect(page.locator('.bubble.theirs small')).toContainText('Ana López');
+    await page.getByLabel('Mensaje a Centro').fill('Gracias, Ana');
+    await page.getByRole('button', { name: 'Enviar', exact: true }).click();
+    await expect.poll(() => posted).toContainEqual({ path: '/owner/v1/messages/branches', body: { licenseIds: ['c'], message: 'Gracias, Ana' } });
+    await expect(page.getByLabel('Mensaje a Centro')).toHaveValue('');
+    await page.getByRole('button', { name: 'Todas las conversaciones' }).click();
+    await page.screenshot({ path: 'test-results/mensajes.png', fullPage: true });
+
+});
+
+test('mensajes: uno a todas las sucursales a la vez', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await openMore(page, 'Mensajes');
+    await page.getByLabel('Mensaje a todas las sucursales').fill('El lunes hay junta');
+    await page.getByRole('button', { name: 'Enviar a las 3' }).click();
+    await expect(page.getByRole('status')).toHaveText('Enviado a 3 sucursales.');
+    expect(posted).toContainEqual({ path: '/owner/v1/messages/branches', body: { licenseIds: [], message: 'El lunes hay junta' } });
+
+});
+
+test('mensajes: escribir al soporte de Culinary y ver su respuesta', async ({ page }) => {
+
+    await mock(page);
+    await page.goto('/');
+    await openMore(page, 'Mensajes');
+    await page.getByRole('button', { name: /Factura de octubre/ }).click();
+    await expect(page.locator('.bubble.theirs')).toContainText('Hoy en la tarde.');
+    await expect(page.locator('.bubble.theirs small')).toContainText('Soporte de Culinary');
+    await page.getByLabel('Responder al soporte').fill('Gracias');
+    await page.getByRole('button', { name: 'Responder' }).click();
+    await expect.poll(() => posted).toContainEqual({ path: '/owner/v1/support/t1/messages', body: { message: 'Gracias' } });
+    await page.getByRole('button', { name: 'Todas las solicitudes' }).click();
+    await page.getByRole('button', { name: 'Escribir al soporte' }).click();
+    await page.getByLabel('Asunto').fill('Cambio de plan');
+    await page.locator('.ticket-form select').selectOption('n');
+    await page.locator('.ticket-form textarea').fill('Quiero pasar Norte a Pro');
+    await page.getByRole('button', { name: 'Enviar al soporte' }).click();
+    await expect.poll(() => posted).toContainEqual({ path: '/owner/v1/support', body: { subject: 'Cambio de plan', message: 'Quiero pasar Norte a Pro', licenseId: 'n' } });
 
 });

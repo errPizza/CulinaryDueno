@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, ChartColumn, ChefHat, CircleAlert, CloudSun, Ellipsis, HandCoins, HeartHandshake, LogOut, RefreshCw, Settings2, TrendingUp, Users, UtensilsCrossed, Wallet } from 'lucide-react';
+import { Bell, ChartColumn, ChefHat, CircleAlert, CloudSun, Ellipsis, HandCoins, HeartHandshake, Lock, LogOut, MessageSquare, RefreshCw, Settings2, TrendingUp, Users, UtensilsCrossed, Wallet } from 'lucide-react';
 import * as api from './api';
-import { CashView, ProductsView, StaffView } from './detail';
+import { CashView, Locked, ProductsView, StaffView } from './detail';
+import { MessagesView } from './messages';
 import { AlertsView, AreasBlock, CustomersView, ForecastView, GoalsBlock, KitchenView, NowMore, ProfitView, ShiftsBlock, TrendView } from './insights';
 import { SettingsView } from './settings';
 import { channelLabel, clockHour, cutoffHour, dayOrder, daysIn, hourLabel, MAX_DAYS, message, money, percent, PERIODS, plural, previous, range, rangeLabel, seenAt, shiftDay, soFar, todayOf, whole, type Period, type Range } from './format';
@@ -14,7 +15,7 @@ const REFRESH_MS = 60_000;
 
 const sum = <T,>(rows: readonly T[], read: (row: T) => number) => rows.reduce((total, row) => total + read(row), 0);
 
-export type Section = 'summary' | 'products' | 'cash' | 'staff' | 'trend' | 'forecast' | 'profit' | 'kitchen' | 'customers' | 'alerts' | 'settings';
+export type Section = 'summary' | 'products' | 'cash' | 'staff' | 'trend' | 'forecast' | 'profit' | 'kitchen' | 'customers' | 'alerts' | 'settings' | 'messages';
 
 const SECTIONS: { id: Section; label: string; Icon: typeof ChartColumn }[] = [
     { id: 'summary', label: 'Resumen', Icon: ChartColumn },
@@ -22,6 +23,7 @@ const SECTIONS: { id: Section; label: string; Icon: typeof ChartColumn }[] = [
     { id: 'cash', label: 'Caja', Icon: Wallet },
     { id: 'staff', label: 'Personal', Icon: Users }
 ];
+const CONTACT: { id: Section; label: string; Icon: typeof ChartColumn }[] = [{ id: 'messages', label: 'Mensajes', Icon: MessageSquare }];
 // Under «Más»: on the phone the bar keeps five buttons.
 const MORE: { id: Section; label: string; Icon: typeof ChartColumn }[] = [
     { id: 'trend', label: 'Tendencia', Icon: TrendingUp },
@@ -33,7 +35,20 @@ const MORE: { id: Section; label: string; Icon: typeof ChartColumn }[] = [
     { id: 'settings', label: 'Ajustes', Icon: Settings2 }
 ];
 // These read their own stretch, or none, so the period picker steps aside.
-const OWN_SPAN = new Set<Section>(['trend', 'forecast', 'alerts', 'settings']);
+const OWN_SPAN = new Set<Section>(['trend', 'forecast', 'alerts', 'settings', 'messages']);
+// Whole areas of the Pro plan. With only Lite branches in view they show locked at once, without asking the server.
+const PRO: Partial<Record<Section, [title: string, what: string]>> = {
+    cash: ['Caja', 'Cobros por método, propinas, arqueos, retiros y cortes Z.'],
+    staff: ['Personal', 'Ventas, cuentas y propinas de cada mesero.'],
+    trend: ['Tendencia', 'Ventas por semana, mes y año contra el año anterior.'],
+    forecast: ['El pronóstico', 'Ventas y platillos de los próximos 7 días.'],
+    profit: ['La rentabilidad', 'Ventas menos costo de lo vendido, mermas, gastos, horas trabajadas y gastos fijos.'],
+    kitchen: ['Cocina', 'Tiempos por platillo y estación, devoluciones y entregas a tiempo.'],
+    customers: ['Clientes', 'Frecuencia, valor de vida y calificaciones de los clientes.']
+};
+const inScope = (me: api.Me, branch: string) => me.branches.filter(b => !branch || b.licenseId === branch);
+const onlyLite = (branches: api.Branch[]) => branches.length > 0 && branches.every(b => b.tier === 'lite');
+const lockedFor = (me: api.Me | undefined, branch: string, section: Section) => !!me && !!PRO[section] && onlyLite(inScope(me, branch));
 
 export type Data =
     | { section: 'summary'; summary: api.Summary; before: api.Summary; goals: api.Goals | null }
@@ -46,7 +61,9 @@ export type Data =
     | { section: 'kitchen'; kitchen: api.Kitchen }
     | { section: 'customers'; customers: api.Customers }
     | { section: 'alerts'; alerts: api.Alerts }
-    | { section: 'settings'; settings: api.Settings; canEdit: boolean };
+    | { section: 'settings'; settings: api.Settings; canEdit: boolean }
+    | { section: 'messages'; inbox: api.Inbox }
+    | { section: 'locked' };
 
 export type View = { me: api.Me; scope: api.Branch[]; today: string; span: Range; loadedAt: number; data: Data; asked?: string };
 
@@ -70,6 +87,7 @@ async function fetchSection(section: Section, period: Period, span: Range, by: a
     if (section === 'kitchen') return { section, kitchen: await api.kitchen(span.from, span.to, branch) };
     if (section === 'customers') return { section, customers: await api.customers(span.from, span.to, branch) };
     if (section === 'alerts') return { section, alerts: await api.alerts(branch) };
+    if (section === 'messages') return { section, inbox: await api.inbox() };
     if (section === 'settings') { const reply = await api.settings(); return { section, settings: reply.settings, canEdit: reply.canEdit }; }
     if (section === 'cash') { const [summary, cash, closings] = await Promise.all([api.summary(span.from, span.to, branch), api.cash(span.from, span.to, branch), api.closings(span.from, span.to, branch)]); return { section, summary, cash, closings }; }
     if (section === 'staff') { const [staff, team] = await Promise.all([api.staff(span.from, span.to, branch), api.team(span.from, span.to, branch)]); return { section, staff, team }; }
@@ -93,7 +111,7 @@ function Dashboard() {
 
     const [branch, setBranch] = useState(''), [period, setPeriod] = useState<Period>('today'), [section, setSection] = useState<Section>('summary'), [custom, setCustom] = useState<Range | null>(null);
     const [view, setView] = useState<View | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(true), [reading, setReading] = useState(false);
-    const [by, setBy] = useState<api.Trend['by']>('month'), [more, setMore] = useState(false), [alertCount, setAlertCount] = useState(0);
+    const [by, setBy] = useState<api.Trend['by']>('month'), [more, setMore] = useState(false), [alertCount, setAlertCount] = useState(0), [unread, setUnread] = useState(0);
     const ask = useRef(0);
     // What the screen is asking for; while the view on hand answers something else, the skeleton stands in.
     const asking = [section, branch, period, custom?.from, custom?.to, by].join('|');
@@ -106,12 +124,14 @@ function Dashboard() {
         try {
 
             const me = await api.me();
-            const scope = me.branches.filter(b => !branch || b.licenseId === branch);
+            const scope = inScope(me, branch);
             const today = todayOf(scope);
             const span = range(period, today, custom ?? { from: shiftDay(today, -29), to: today });
-            const [data, alerts] = await Promise.all([fetchSection(section, period, span, by, today, branch || undefined), api.alerts(branch || undefined).catch(() => null)]);
+            // A locked area asks the server for nothing; the count of unread messages rides along with every look.
+            const [data, alerts, inbox] = await Promise.all([lockedFor(me, branch, section) ? { section: 'locked' } as Data : fetchSection(section, period, span, by, today, branch || undefined), api.alerts(branch || undefined).catch(() => null), section === 'messages' ? null : api.inbox().catch(() => null)]);
+            const box = data.section === 'messages' ? data.inbox : inbox;
 
-            if (mine === ask.current) { setView({ me, scope, today, span, loadedAt: Date.now(), data, asked: [section, branch, period, custom?.from, custom?.to, by].join('|') }); setError(''); if (alerts) setAlertCount(alerts.alerts.filter(a => a.level !== 'info').length); }
+            if (mine === ask.current) { setView({ me, scope, today, span, loadedAt: Date.now(), data, asked: [section, branch, period, custom?.from, custom?.to, by].join('|') }); setError(''); if (alerts) setAlertCount(alerts.alerts.filter(a => a.level !== 'info').length); if (box) setUnread(box.branches.reduce((t, b) => t + b.unread, 0)); }
 
         } catch (e) { if (mine === ask.current) setError(message(e)); } finally { if (mine === ask.current) setLoading(false); }
 
@@ -131,8 +151,13 @@ function Dashboard() {
     }, [load]);
 
     const branches = view?.me.branches ?? [];
-    // Free dates are Pro: with only Lite branches in view the option is not offered.
-    const periods = PERIODS.filter(p => p.id !== 'custom' || period === 'custom' || !view || view.scope.some(b => b.tier === 'pro'));
+    // Free dates are Pro: with only Lite branches in view the option shows locked.
+    const datesLocked = !!view && onlyLite(inScope(view.me, branch));
+    const locked = (id: Section) => lockedFor(view?.me, branch, id);
+    const lockedNow = locked(section);
+    const go = (id: Section) => { setSection(id); setMore(false); };
+    const badge = (id: Section) => id === 'alerts' && alertCount > 0 ? <span className="count">{alertCount}</span> : id === 'messages' && unread > 0 ? <span className="count" aria-label={plural(unread, 'mensaje sin leer', 'mensajes sin leer')}>{unread}</span> : locked(id) ? <span className="lock" role="img" aria-label="Plan Pro"><Lock size={14} aria-hidden="true" /></span> : null;
+    const menu = [...CONTACT, ...MORE];
     const pick = (p: Period) => { if (p === 'custom' && !custom && view) setCustom({ from: shiftDay(view.today, -29), to: view.today }); setPeriod(p); };
 
     return <div className="shell">
@@ -143,12 +168,14 @@ function Dashboard() {
             <b>Culinary Dueño</b>
             <nav className="sections" aria-label="Secciones">
 
-                {SECTIONS.map(({ id, label, Icon }) => <button key={id} aria-current={section === id ? 'page' : undefined} onClick={() => { setSection(id); setMore(false); }}><Icon size={20} aria-hidden="true" /><span>{label}</span></button>)}
-                <button className="more-toggle" aria-current={MORE.some(m => m.id === section) ? 'page' : undefined} aria-expanded={more} aria-haspopup="menu" onClick={() => setMore(!more)}><Ellipsis size={20} aria-hidden="true" /><span>{MORE.find(m => m.id === section)?.label ?? 'Más'}</span></button>
-                {more && <div className="more" role="menu" aria-label="Más secciones">{MORE.map(({ id, label, Icon }) => <button key={id} role="menuitem" aria-current={section === id ? 'page' : undefined} onClick={() => { setSection(id); setMore(false); }}><Icon size={18} aria-hidden="true" /><span>{label}</span>{id === 'alerts' && alertCount > 0 && <span className="count">{alertCount}</span>}</button>)}</div>}
+                {SECTIONS.map(({ id, label, Icon }) => <button key={id} className={locked(id) ? 'is-locked' : undefined} aria-current={section === id ? 'page' : undefined} onClick={() => go(id)}><Icon size={20} aria-hidden="true" /><span>{label}</span>{locked(id) && <span className="lock corner" role="img" aria-label="Plan Pro"><Lock size={12} aria-hidden="true" /></span>}</button>)}
+                <button className="more-toggle" aria-current={menu.some(m => m.id === section) ? 'page' : undefined} aria-expanded={more} aria-haspopup="menu" onClick={() => setMore(!more)}><Ellipsis size={20} aria-hidden="true" /><span>{menu.find(m => m.id === section)?.label ?? 'Más'}</span>{unread > 0 && <i className="dot" aria-hidden="true" />}</button>
+                {more && <div className="more" role="menu" aria-label="Más secciones">{menu.map(({ id, label, Icon }) => <button key={id} role="menuitem" className={locked(id) ? 'is-locked' : undefined} aria-current={section === id ? 'page' : undefined} onClick={() => go(id)}><Icon size={18} aria-hidden="true" /><span>{label}</span>{badge(id)}</button>)}</div>}
                 {/* On the desk every section has its own line in the sidebar, so «Más» steps aside. */}
+                <p className="side-group" aria-hidden="true">Contacto</p>
+                {CONTACT.map(({ id, label, Icon }) => <button key={'side-' + id} className="side-item" aria-current={section === id ? 'page' : undefined} onClick={() => go(id)}><Icon size={20} aria-hidden="true" /><span>{label}</span>{badge(id)}</button>)}
                 <p className="side-group" aria-hidden="true">Análisis</p>
-                {MORE.map(({ id, label, Icon }) => <button key={`side-${id}`} className="side-item" aria-current={section === id ? 'page' : undefined} onClick={() => { setSection(id); setMore(false); }}><Icon size={20} aria-hidden="true" /><span>{label}</span>{id === 'alerts' && alertCount > 0 && <span className="count">{alertCount}</span>}</button>)}
+                {MORE.map(({ id, label, Icon }) => <button key={'side-' + id} className={locked(id) ? 'side-item is-locked' : 'side-item'} aria-current={section === id ? 'page' : undefined} onClick={() => go(id)}><Icon size={20} aria-hidden="true" /><span>{label}</span>{badge(id)}</button>)}
 
             </nav>
             <div className="tools">
@@ -163,7 +190,7 @@ function Dashboard() {
         </header>
         <div className="controls">
 
-            {branches.length > 1 && <label className="picker"><span className="sr">Sucursal</span>
+            {branches.length > 1 && section !== 'messages' && <label className="picker"><span className="sr">Sucursal</span>
 
                 <select value={branch} onChange={e => setBranch(e.target.value)}>
 
@@ -173,13 +200,15 @@ function Dashboard() {
                 </select>
 
             </label>}
-            {!OWN_SPAN.has(section) && <div className="periods" role="group" aria-label="Periodo">{periods.map(p => <button key={p.id} aria-pressed={period === p.id} onClick={() => pick(p.id)}>{p.label}</button>)}</div>}
-            {!OWN_SPAN.has(section) && period === 'custom' && custom && view && <Dates key={`${custom.from}|${custom.to}`} span={custom} today={view.today} choose={setCustom} />}
+            {!OWN_SPAN.has(section) && !lockedNow && <div className="periods" role="group" aria-label="Periodo">{PERIODS.map(p => p.id === 'custom' && datesLocked && period !== 'custom'
+                ? <button key={p.id} className="is-locked" aria-disabled="true" title="Elegir fechas es del plan Pro"><Lock size={13} aria-hidden="true" />{p.label}<span className="sr"> (plan Pro)</span></button>
+                : <button key={p.id} aria-pressed={period === p.id} onClick={() => pick(p.id)}>{p.label}</button>)}</div>}
+            {!OWN_SPAN.has(section) && !lockedNow && period === 'custom' && custom && view && <Dates key={`${custom.from}|${custom.to}`} span={custom} today={view.today} choose={setCustom} />}
 
         </div>
         {error && <div className="banner" role="alert"><CircleAlert size={18} /><span>{error}{view && ' Lo que ves es de la última actualización.'}</span></div>}
-        {!reading && !error && (!view || view.asked !== asking) && <Skeleton summary={section === 'summary'} />}
-        {reading ? <Privacy close={() => setReading(false)} /> : view && view.data.section === section && (view.asked === asking || error) && <Content view={view} period={period} choose={setBranch} chosen={branch} by={by} chooseBy={setBy} />}
+        {!reading && !error && !lockedNow && (!view || view.asked !== asking) && <Skeleton summary={section === 'summary'} />}
+        {reading ? <Privacy close={() => setReading(false)} /> : lockedNow ? <Locked title={PRO[section]![0]} what={PRO[section]![1]} /> : view && view.data.section === section && (view.asked === asking || error) && <Content view={view} period={period} choose={setBranch} chosen={branch} by={by} chooseBy={setBy} refresh={() => void load()} />}
         {!reading && <footer className="foot"><button className="link quiet-link" onClick={() => setReading(true)}>Aviso de privacidad</button></footer>}
 
     </div>;
@@ -207,7 +236,7 @@ function Dates({ span, today, choose }: { span: Range; today: string; choose: (s
     </div>;
 }
 
-function Content({ view, period, choose, chosen, by, chooseBy }: { view: View; period: Period; choose: (licenseId: string) => void; chosen: string; by: api.Trend['by']; chooseBy: (by: api.Trend['by']) => void }) {
+function Content({ view, period, choose, chosen, by, chooseBy, refresh }: { view: View; period: Period; choose: (licenseId: string) => void; chosen: string; by: api.Trend['by']; chooseBy: (by: api.Trend['by']) => void; refresh: () => void }) {
 
     if (!view.me.branches.length) return <main className="empty"><h2>Aún no hay sucursales en tu cuenta</h2><p>Pide a tu proveedor que revise el acceso de tu cuenta.</p></main>;
 
@@ -223,6 +252,8 @@ function Content({ view, period, choose, chosen, by, chooseBy }: { view: View; p
     if (data.section === 'customers') return <CustomersView view={view} data={data} />;
     if (data.section === 'alerts') return <AlertsView view={view} data={data} />;
     if (data.section === 'settings') return <SettingsView view={view} data={data} />;
+    if (data.section === 'messages') return <MessagesView view={view} data={data} refresh={refresh} />;
+    if (data.section === 'locked') return null;
 
     return <SummaryView view={view} data={data} period={period} choose={choose} chosen={chosen} />;
 }

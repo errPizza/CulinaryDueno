@@ -21,6 +21,7 @@ export function Privacy({ close }: { close: () => void }) {
             <li>De tu cuenta: tu correo, tu contraseña guardada sólo como huella cifrada, la clave de tu autenticador, las sesiones abiertas y los intentos fallidos de entrada.</li>
             <li>De las sucursales a las que tienes acceso: resúmenes por día de ventas, cobros, caja, productos, inventario, tiempos de cocina, devoluciones, calificaciones y gastos. De los clientes, sólo cifras: cuántos regresan, cada cuánto y cuánto gastan en promedio. No incluyen nombres ni teléfonos de clientes, tickets individuales ni datos de pago.</li>
             <li>Del personal: el identificador interno, el nombre visible y el rol de cada persona, con sus cuentas, ventas, propinas, mesas y comensales atendidos, minutos trabajados y su costo según el reloj checador, y el número de cancelaciones, descuentos, reaperturas y aperturas de cajón que pidió. Del equipo de cada sucursal, altas y bajas por mes, sin nombres.</li>
+            <li>De los mensajes: lo que escribes a tus sucursales y lo que te contestan sus gerentes, con el nombre que cada uno tiene en el punto de venta, y lo que escribes al soporte de Culinary. Tus mensajes a una sucursal los leen sus gerentes con tu correo y tu rol.</li>
         </ul>
 
         <h2>Para qué</h2>

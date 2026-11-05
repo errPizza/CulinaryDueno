@@ -445,3 +445,49 @@ h1, h2 { font-weight: 600; text-wrap: balance; }
   .sk-bars { height: 230px; }
 }
 @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
+
+/* ---------- plan Pro bloqueado ---------- */
+.lock { display: inline-flex; align-items: center; margin-left: auto; color: var(--muted); }
+.sections > button.is-locked { opacity: .72; }
+.sections > button .lock.corner { position: absolute; top: 12px; left: calc(50% + 8px); color: var(--on-top-muted); }
+.periods button.is-locked { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); opacity: .7; cursor: not-allowed; }
+.periods button.is-locked:hover { color: var(--muted); }
+.empty .lock-mark { display: inline-grid; place-items: center; width: 48px; height: 48px; margin-bottom: 12px; border-radius: 16px; background: var(--sheet); color: var(--mark); box-shadow: var(--shadow); }
+.more-toggle .dot { position: absolute; top: 12px; left: calc(50% + 8px); width: 8px; height: 8px; border-radius: 50%; background: var(--late); }
+
+/* ---------- mensajes ---------- */
+.threads { list-style: none; padding: 0; margin: 14px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.threads button { width: 100%; display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 10px 12px; background: var(--raised); border: 0; border-radius: var(--radius-sm); text-align: left; transition: background-color .15s; }
+.threads button:hover { background: var(--sunk); }
+.thread-icon { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 12px; background: var(--sheet); color: var(--neutral); }
+.thread-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.thread-text b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-text small { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; color: var(--muted); font-size: 12px; }
+.thread-side .count { margin-left: 0; }
+.status { flex: none; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--flat-bg); color: var(--flat-ink); }
+.status.answered { background: var(--good-bg); color: var(--good-ink); }
+.status.open { background: color-mix(in srgb, var(--amber) 22%, transparent); color: var(--ink); }
+.conversation h2 { margin: 4px 0 6px; }
+.conversation .back { display: inline-flex; align-items: center; gap: 6px; margin-left: -8px; text-decoration: none; }
+.bubbles { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; margin: 12px 0; padding: 2px; }
+.bubble { max-width: 86%; padding: 10px 14px; border-radius: 16px; background: var(--raised); }
+.bubble p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+.bubble.mine { align-self: flex-end; background: var(--top); color: var(--on-top); border-bottom-right-radius: 6px; }
+.bubble.mine small { color: var(--on-top-muted); }
+.bubble.theirs { align-self: flex-start; border-bottom-left-radius: 6px; }
+.composer, .ticket-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.composer + .threads { margin-top: 18px; }
+.field textarea { padding: 12px 14px; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; font: inherit; font-weight: 450; font-size: 16px; color: inherit; resize: vertical; min-height: 88px; }
+.field textarea:focus { outline: 2px solid var(--amber); outline-offset: -1px; }
+.composer .primary, .ticket-form .primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 22px; align-self: flex-end; }
+.form-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.sent { color: var(--ok); font-size: 14px; font-weight: 550; }
+.block > .ghost { margin-top: 2px; }
+
+@media (min-width: 900px) {
+  .sections > button .lock.corner { position: static; margin-left: auto; color: var(--muted); }
+  .sections > button.is-locked[aria-current='page'] .lock { color: var(--on-top-muted); }
+}
+.headline .lead { color: var(--on-top-muted); }

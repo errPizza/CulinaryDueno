@@ -1,3 +1,4 @@
+import { Lock } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type * as api from './api';
 import type { Data, View } from './app';
@@ -27,7 +28,7 @@ export function Headline({ view, title, figure, outOfRange, children }: { view: 
 /** A whole Pro area seen with only Lite branches: said once, instead of a page of zeros. */
 export function Locked({ title, what }: { title: string; what: string }) {
 
-    return <main className="empty"><h2>{title} es del plan Pro</h2><p>{what} Pide a tu proveedor el cambio de plan.</p></main>;
+    return <main className="empty locked"><span className="lock-mark" aria-hidden="true"><Lock size={22} /></span><h2>{title} es del plan Pro</h2><p>{what} Pide a tu proveedor el cambio de plan.</p></main>;
 }
 
 export const branchOf = (view: View) => { const names = new Map(view.me.branches.map(b => [b.licenseId, b.name])); return (licenseId: string) => view.scope.length > 1 ? `${names.get(licenseId) ?? 'Sucursal'} · ` : ''; };
