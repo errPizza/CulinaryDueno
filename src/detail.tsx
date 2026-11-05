@@ -60,7 +60,7 @@ export function ProductsView({ view, data }: Of<'products'>) {
         </Headline>
         <div className="col">
 
-            <Block title="Más vendidos">{products.length ? <Rows label="Más vendidos" rows={products.slice(0, TOP).map(line)} /> : <p className="quiet">Sin productos vendidos en este periodo.</p>}</Block>
+            <Block title="Más vendidos"><Rows label="Más vendidos" rows={products.slice(0, TOP).map(line)} empty="Sin productos vendidos en este periodo." /></Block>
             {products.length > TOP && <Block title="Menos vendidos"><Rows label="Menos vendidos" rows={least.map(line)} /></Block>}
             {products.length > 0 && <details className="all">
 
@@ -77,7 +77,7 @@ export function ProductsView({ view, data }: Of<'products'>) {
         </div>
         <div className="col">
 
-            {categories.length > 1 && <Block title="Por categoría"><Rows label="Ventas por categoría" rows={categories.map(([name, value]) => ({ key: name, name: name || 'Sin categoría', value, note: percent(value, revenue) }))} /></Block>}
+            {<Block title="Por categoría"><Rows label="Ventas por categoría" empty="Sin ventas por categoría en este periodo." rows={categories.map(([name, value]) => ({ key: name, name: name || 'Sin categoría', value, note: percent(value, revenue) }))} /></Block>}
             <Block title="Mermas e inventario">
 
                 {!onlyLite && <Facts items={[['Merma', money(inventory.waste)], ['Faltante', money(inventory.shortage)], ['Sobrante', money(inventory.surplus)]]} />}
@@ -125,7 +125,7 @@ export function CashView({ view, data }: Of<'cash'>) {
         </Headline>
         <div className="col">
 
-            <Block title="Por método de pago">{payments.length ? <Rows label="Cobrado por método" rows={payments.map(p => ({ key: p.method, name: methodLabel(p.method), value: p.amount, note: `${plural(p.count, 'pago', 'pagos')} · ${percent(p.amount, collected)}${p.tips ? ` · propinas ${money(p.tips)}` : ''}` }))} /> : <p className="quiet">Sin cobros en este periodo.</p>}</Block>
+            <Block title="Por método de pago">{<Rows label="Cobrado por método" empty="Sin cobros en este periodo." rows={payments.map(p => ({ key: p.method, name: methodLabel(p.method), value: p.amount, note: `${plural(p.count, 'pago', 'pagos')} · ${percent(p.amount, collected)}${p.tips ? ` · propinas ${money(p.tips)}` : ''}` }))} />}</Block>
             <Block title="Cierres de caja">
 
                 {closes.length ? <ul className="plain closes">{closes.map(c => <li key={`${c.licenseId}|${c.cashId}`}>
@@ -153,7 +153,7 @@ export function CashView({ view, data }: Of<'cash'>) {
                 <p className="note">Los gastos no incluyen devoluciones en efectivo, que aparecen en Devoluciones.</p>
 
             </Block>
-            {summary.refunds.length > 0 && <Block title="Devoluciones"><Rows label="Devoluciones por método" rows={summary.refunds.map(r => ({ key: r.method, name: methodLabel(r.method), value: r.amount, note: plural(r.count, 'devolución', 'devoluciones') }))} /></Block>}
+            {<Block title="Devoluciones"><Rows label="Devoluciones por método" empty="Sin devoluciones en este periodo." rows={summary.refunds.map(r => ({ key: r.method, name: methodLabel(r.method), value: r.amount, note: plural(r.count, 'devolución', 'devoluciones') }))} /></Block>}
             <Block title="Cortes Z">
 
                 {closings.length ? <ul className="plain">{closings.map(z => <li key={`${z.licenseId}|${z.number}`}>
@@ -194,12 +194,12 @@ export function StaffView({ view, data }: Of<'staff'>) {
         </Headline>
         <div className="col">
 
-            <Block title="Ventas">{staff.length ? <Rows label="Ventas por mesero" rows={staff.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.net, note: s.tickets ? `${branch(s.licenseId)}${plural(s.tickets, 'cuenta', 'cuentas')} · ticket ${money(Math.trunc(s.net / s.tickets))} · ${percent(s.net, net)}` : `${branch(s.licenseId)}sin cuentas cerradas, sólo propinas` }))} /> : <p className="quiet">Sin ventas por mesero en este periodo.</p>}</Block>
+            <Block title="Ventas">{<Rows label="Ventas por mesero" empty="Sin ventas por mesero en este periodo." rows={staff.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.net, note: s.tickets ? `${branch(s.licenseId)}${plural(s.tickets, 'cuenta', 'cuentas')} · ticket ${money(Math.trunc(s.net / s.tickets))} · ${percent(s.net, net)}` : `${branch(s.licenseId)}sin cuentas cerradas, sólo propinas` }))} />}</Block>
 
         </div>
         <div className="col">
 
-            {byTips.length > 0 && <Block title="Propinas"><Rows label="Propinas por mesero" rows={byTips.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.tips, note: `${branch(s.licenseId)}${percent(s.tips, tips)}` }))} /></Block>}
+            {<Block title="Propinas"><Rows label="Propinas por mesero" empty="Sin propinas en este periodo." rows={byTips.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.tips, note: `${branch(s.licenseId)}${percent(s.tips, tips)}` }))} /></Block>}
 
         </div>
         <TeamBlocks view={view} team={data.team} />

@@ -53,7 +53,7 @@ function Gauge({ goal }: { goal: api.Goal }) {
 
 export function GoalsBlock({ goals }: { goals: api.Goals | null }) {
 
-    if (!goals) return null;
+    if (!goals) return <Block title="Metas" className="goals"><p className="quiet">No se pudieron leer las metas ahora. Se vuelve a intentar en un minuto.</p></Block>;
 
     const first = goals.goals[0];
 
@@ -71,16 +71,12 @@ const clock = (hour: number) => `${String(hour).padStart(2, '0')}:00`;
 
 export function ShiftsBlock({ shifts }: { shifts?: api.Summary['shifts'] }) {
 
-    if (!shifts?.some(s => s.tickets)) return null;
-
-    return <Block title="Por turno"><Rows label="Ventas por turno" rows={shifts.map(s => ({ key: s.name, name: `${s.name} · ${clock(s.start)} a ${clock(s.end)}`, value: s.net, note: s.tickets ? `${plural(s.tickets, 'cuenta', 'cuentas')} · ticket ${money(s.averageTicket)}` : 'Sin ventas' }))} /></Block>;
+    return <Block title="Por turno"><Rows label="Ventas por turno" empty="Sin ventas por turno en este periodo." rows={(shifts ?? []).map(s => ({ key: s.name, name: `${s.name} · ${clock(s.start)} a ${clock(s.end)}`, value: s.net, note: s.tickets ? `${plural(s.tickets, 'cuenta', 'cuentas')} · ticket ${money(s.averageTicket)}` : 'Sin ventas' }))} /></Block>;
 }
 
 export function AreasBlock({ areas }: { areas?: api.Summary['areas'] }) {
 
-    if (!areas || areas.length < 2) return null;
-
-    return <Block title="Por área"><Rows label="Ventas por área" rows={areas.map(a => ({ key: a.area, name: a.area || 'Sin mesa', value: a.net, note: `${plural(a.tickets, 'cuenta', 'cuentas')} · ${plural(a.people, 'comensal', 'comensales')}` }))} /><p className="note">«Sin mesa» agrupa las cuentas que no se abrieron en una mesa.</p></Block>;
+    return <Block title="Por área"><Rows label="Ventas por área" empty="Sin ventas por área en este periodo." rows={(areas ?? []).map(a => ({ key: a.area, name: a.area || 'Sin mesa', value: a.net, note: `${plural(a.tickets, 'cuenta', 'cuentas')} · ${plural(a.people, 'comensal', 'comensales')}` }))} /><p className="note">«Sin mesa» agrupa las cuentas que no se abrieron en una mesa.</p></Block>;
 }
 
 /** What the floor looks like right now beyond the accounts, from branches that send it. */
@@ -125,9 +121,8 @@ export function TrendView({ view, data, by, choose }: Of<'trend'> & { by: api.Tr
         </Headline>
         <div className="col">
 
-            <Block title={by === 'week' ? 'Últimas 12 semanas' : by === 'month' ? 'Últimos 12 meses' : 'Este año'}>{trend.periods.length
-                ? <Rows label="Ventas por periodo" rows={[...trend.periods].reverse().map(p => ({ key: p.key, name: periodName(p.key, by), value: p.net, note: `${plural(p.tickets, 'cuenta', 'cuentas')} · ticket ${money(p.averageTicket)}${p.growthBps !== null ? ` · ${p.growthBps >= 0 ? '+' : '−'}${bps(Math.abs(p.growthBps))} contra ${money(p.lastYearNet)} del año pasado` : ''}` }))} />
-                : <p className="quiet">Sin ventas en este tramo.</p>}</Block>
+            <Block title={by === 'week' ? 'Últimas 12 semanas' : by === 'month' ? 'Últimos 12 meses' : 'Este año'}>{<Rows label="Ventas por periodo" empty="Sin ventas en este tramo." rows={[...trend.periods].reverse().map(p => ({ key: p.key, name: periodName(p.key, by), value: p.net, note: `${plural(p.tickets, 'cuenta', 'cuentas')} · ticket ${money(p.averageTicket)}${p.growthBps !== null ? ` · ${p.growthBps >= 0 ? '+' : '−'}${bps(Math.abs(p.growthBps))} contra ${money(p.lastYearNet)} del año pasado` : ''}` }))} />
+}</Block>
 
         </div>
 
@@ -257,14 +252,14 @@ export function KitchenView({ view, data }: Of<'kitchen'>) {
         </Headline>
         <div className="col">
 
-            <Block title="Los más lentos">{k.dishes.length ? <Rows label="Tiempo por platillo" shown={duration} rows={k.dishes.slice(0, 10).map(d => ({ key: d.name, name: d.name, value: d.averageSeconds, note: `${d.station || 'Sin estación'} · ${plural(d.count, 'preparado', 'preparados')} · espera ${duration(d.averageWait)} · preparación ${duration(d.averagePrep)} · máximo ${duration(d.maxSeconds)}${d.averagePass !== null ? ` · al cliente en ${duration(d.averagePass)}` : ''}` }))} /> : <p className="quiet">Sin platillos marcados como listos en este periodo.</p>}</Block>
-            {k.stations.length > 1 && <Block title="Por estación"><Rows label="Tiempo por estación" shown={duration} rows={k.stations.map(s => ({ key: s.station, name: s.station || 'Sin estación', value: s.averageSeconds, note: `${plural(s.count, 'platillo', 'platillos')} · máximo ${duration(s.maxSeconds)}` }))} /></Block>}
+            <Block title="Los más lentos">{<Rows label="Tiempo por platillo" empty="Sin platillos marcados como listos en este periodo." shown={duration} rows={k.dishes.slice(0, 10).map(d => ({ key: d.name, name: d.name, value: d.averageSeconds, note: `${d.station || 'Sin estación'} · ${plural(d.count, 'preparado', 'preparados')} · espera ${duration(d.averageWait)} · preparación ${duration(d.averagePrep)} · máximo ${duration(d.maxSeconds)}${d.averagePass !== null ? ` · al cliente en ${duration(d.averagePass)}` : ''}` }))} />}</Block>
+            {<Block title="Por estación"><Rows label="Tiempo por estación" empty="Sin estaciones medidas en este periodo." shown={duration} rows={k.stations.map(s => ({ key: s.station, name: s.station || 'Sin estación', value: s.averageSeconds, note: `${plural(s.count, 'platillo', 'platillos')} · máximo ${duration(s.maxSeconds)}` }))} /></Block>}
 
         </div>
         <div className="col">
 
             <Block title="Devoluciones">{k.returns.length ? <ul className="plain">{k.returns.map(r => <li key={r.name}><b>{r.name}</b><span>{plural(r.count, 'devuelto', 'devueltos')} de {whole(r.sold)} vendidos ({bps(r.rateBps)}) · {r.reasons.map(x => `${x.label} ${x.count}`).join(', ')}</span></li>)}</ul> : <p className="quiet">Ningún platillo regresó a cocina en este periodo.</p>}</Block>
-            {k.reasons.length > 0 && <Block title="Motivos"><Rows label="Devoluciones por motivo" shown={whole} rows={k.reasons.map(r => ({ key: r.reason, name: r.label, value: r.count }))} /></Block>}
+            {<Block title="Motivos"><Rows label="Devoluciones por motivo" empty="Sin devoluciones en este periodo." shown={whole} rows={k.reasons.map(r => ({ key: r.reason, name: r.label, value: r.count }))} /></Block>}
             <Block title="Tiempo prometido">{k.promises.length ? <ul className="plain">{k.promises.map(p => <li key={p.mode}><b>{modeLabel(p.mode)}: {bps(p.onTimeBps)} a tiempo</b><span>{plural(p.late, 'pedido tarde', 'pedidos tarde')} de {whole(p.count)} · se prometieron {duration(p.averagePromised)} y tomó {duration(p.averageActual)} en promedio</span></li>)}</ul> : <p className="quiet">Sin pedidos con hora prometida. La sucursal la registra al crear el pedido.</p>}<p className="note">A domicilio se mide la salida más el tiempo estimado de la ruta; la sucursal no sabe cuándo llegó.</p></Block>
 
         </div>
@@ -312,8 +307,8 @@ export function CustomersView({ view, data }: Of<'customers'>) {
                 <p className="note">Las que dejan los clientes en la sucursal. Google Maps y TripAdvisor no están conectados.</p>
 
             </Block>
-            {c.best.length > 0 && <Block title="Platillos mejor calificados"><Rows label="Mejor calificados" shown={v => stars(v)} rows={c.best.map(d => ({ key: d.name, name: d.name, value: d.averageTenths, note: plural(d.count, 'calificación', 'calificaciones') }))} /></Block>}
-            {c.worst.length > 0 && <Block title="Platillos peor calificados"><Rows label="Peor calificados" shown={v => stars(v)} rows={c.worst.map(d => ({ key: d.name, name: d.name, value: d.averageTenths, note: `${plural(d.count, 'calificación', 'calificaciones')} de las cuentas que lo pidieron` }))} /></Block>}
+            {<Block title="Platillos mejor calificados"><Rows label="Mejor calificados" empty="Sin calificaciones en este periodo." shown={v => stars(v)} rows={c.best.map(d => ({ key: d.name, name: d.name, value: d.averageTenths, note: plural(d.count, 'calificación', 'calificaciones') }))} /></Block>}
+            {<Block title="Platillos peor calificados"><Rows label="Peor calificados" empty="Sin calificaciones en este periodo." shown={v => stars(v)} rows={c.worst.map(d => ({ key: d.name, name: d.name, value: d.averageTenths, note: `${plural(d.count, 'calificación', 'calificaciones')} de las cuentas que lo pidieron` }))} /></Block>}
 
         </div>
 
@@ -380,7 +375,7 @@ export function MenuBlocks({ view, menu }: { view: View; menu: api.Menu }) {
         </div>
         <div className="col">
 
-            {menu.kinds.length > 0 && <Block title="Mix de consumo"><Rows label="Ventas por tipo" rows={menu.kinds.map(k => ({ key: k.kind, name: kindLabel(k.kind), value: k.revenue, note: `${plural(k.quantity, 'unidad', 'unidades')} · ${bps(mix ? Math.round(k.revenue * 10_000 / mix) : 0)}` }))} />{menu.kinds.some(k => !k.kind) && <p className="note">Clasifica las categorías en la sucursal (Catálogo › Editar categorías) para separar comida, bebidas y alcohol.</p>}</Block>}
+            {<Block title="Mix de consumo"><Rows label="Ventas por tipo" empty="Sin ventas por tipo en este periodo." rows={menu.kinds.map(k => ({ key: k.kind, name: kindLabel(k.kind), value: k.revenue, note: `${plural(k.quantity, 'unidad', 'unidades')} · ${bps(mix ? Math.round(k.revenue * 10_000 / mix) : 0)}` }))} />{menu.kinds.some(k => !k.kind) && <p className="note">Clasifica las categorías en la sucursal (Catálogo › Editar categorías) para separar comida, bebidas y alcohol.</p>}</Block>}
             {(menu.slowDays.length > 0 || menu.peakHours.length > 0) && <Block title="Cuándo promocionar">
 
                 <ul className="plain">
@@ -427,7 +422,7 @@ export function TeamBlocks({ view, team }: { view: View; team: api.Team }) {
 
             <Block title="Eficiencia">
 
-                {worked.length ? <Rows label="Eficiencia por persona" rows={worked.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.net, note: `${branch(s.licenseId)}${plural(s.tables, 'mesa', 'mesas')} · ${plural(s.people, 'comensal', 'comensales')} · ticket ${money(s.averageTicket)}${s.minutes ? ` · ${hoursWorked(s.minutes)} · ${s.salesPerHour === null ? '' : `${money(s.salesPerHour)} por hora`}` : ''}` }))} /> : <p className="quiet">Sin mesas ni horas registradas en este periodo.</p>}
+                {<Rows label="Eficiencia por persona" empty="Sin mesas ni horas registradas en este periodo." rows={worked.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.net, note: `${branch(s.licenseId)}${plural(s.tables, 'mesa', 'mesas')} · ${plural(s.people, 'comensal', 'comensales')} · ticket ${money(s.averageTicket)}${s.minutes ? ` · ${hoursWorked(s.minutes)} · ${s.salesPerHour === null ? '' : `${money(s.salesPerHour)} por hora`}` : ''}` }))} />}
 
             </Block>
             <Block title="Costo laboral">
@@ -458,7 +453,7 @@ export function TeamBlocks({ view, team }: { view: View; team: api.Team }) {
                 <p className="note">Reparto sugerido de {money(team.tips.total)} en proporción a las horas del reloj checador. El reparto real lo decide la sucursal.</p>
 
             </Block>}
-            {team.couriers.length > 0 && <Block title="Repartidores"><Rows label="Ventas por repartidor" rows={team.couriers.map(c => ({ key: `${c.licenseId}|${c.courierId}`, name: c.name, value: c.net, note: `${branch(c.licenseId)}${plural(c.deliveries, 'entrega', 'entregas')}` }))} /></Block>}
+            {<Block title="Repartidores"><Rows label="Ventas por repartidor" empty="Sin entregas a domicilio en este periodo." rows={team.couriers.map(c => ({ key: `${c.licenseId}|${c.courierId}`, name: c.name, value: c.net, note: `${branch(c.licenseId)}${plural(c.deliveries, 'entrega', 'entregas')}` }))} /></Block>}
             <Block title="Rotación de personal">
 
                 <Facts items={[['Activos', whole(team.roster.active)], ['Altas en 12 meses', whole(team.roster.hires)], ['Bajas en 12 meses', whole(team.roster.exits)], ['Rotación anual', bps(team.roster.turnoverBps)]]} />

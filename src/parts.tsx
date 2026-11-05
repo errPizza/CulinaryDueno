@@ -56,7 +56,10 @@ export function Delta({ now, before, good = 1, shown = money, percent = false }:
 }
 
 /** Lines of the closing slip: a name, its figure and a bar measured against the largest one, which carries the amber. */
-export function Rows({ rows, shown = money, label }: { rows: Row[]; shown?: (value: number) => string; label?: string }) {
+export function Rows({ rows, shown = money, label, empty = 'Sin datos en este periodo.' }: { rows: Row[]; shown?: (value: number) => string; label?: string; empty?: string }) {
+
+    // Without rows the chart keeps its frame: empty tracks and one sentence, so the screen does not change shape.
+    if (!rows.length) return <div className="chart-empty" role="img" aria-label={`${label ?? 'Gráfica'}: ${empty}`}><span /><span /><span /><p>{empty}</p></div>;
 
     const top = Math.max(...rows.map(r => r.value), 1);
 
@@ -68,6 +71,28 @@ export function Rows({ rows, shown = money, label }: { rows: Row[]; shown?: (val
         {r.note && <span className="rank-state">{r.note}</span>}
 
     </div></li>)}</ol>;
+}
+
+/** While a section loads: the shape of what is coming, in flat shimmering blocks, instead of a line of text. */
+export function Skeleton({ summary }: { summary: boolean }) {
+
+    const card = (rows: number, key: string) => <div className="sk-card" key={key}><span className="sk sk-title" />{Array.from({ length: rows }, (_, i) => <span className="sk sk-row" key={i} />)}</div>;
+
+    return <main className={summary ? 'report summary loading' : 'report loading'} aria-busy="true" aria-label="Cargando">
+
+        <div className="sk-hero">
+
+            <span className="sk sk-label" />
+            <span className="sk sk-figure" />
+            <span className="sk sk-line" />
+            {summary && <div className="sk-bars">{[38, 64, 92, 70, 30, 22, 48, 80, 58, 26].map((h, i) => <span className="sk" key={i} style={{ height: `${h}%` }} />)}</div>}
+
+        </div>
+        {summary && <div className="stats">{['a', 'b', 'c'].map(k => <div className="sk-card sk-stat" key={k}><span className="sk sk-title" /><span className="sk sk-value" /><span className="sk sk-pill" /></div>)}</div>}
+        <div className="col">{card(3, 'a')}{card(4, 'b')}</div>
+        <div className="col">{card(3, 'c')}{card(2, 'd')}</div>
+
+    </main>;
 }
 
 export function Facts({ items }: { items: [string, ReactNode][] }) {

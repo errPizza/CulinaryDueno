@@ -8,7 +8,7 @@ import { channelLabel, clockHour, cutoffHour, dayOrder, daysIn, hourLabel, MAX_D
 import { Gate } from './gate';
 import { Privacy } from './privacy';
 import { Days, Hours, METRICS, type Metric } from './hours';
-import { allLite, Behind, Block, branchNames, Delta, Facts, OutOfRange, ProNote, Rows, useCountUp, Versus } from './parts';
+import { allLite, Behind, Block, branchNames, Delta, Facts, OutOfRange, ProNote, Rows, Skeleton, useCountUp, Versus } from './parts';
 
 const REFRESH_MS = 60_000;
 
@@ -48,7 +48,7 @@ export type Data =
     | { section: 'alerts'; alerts: api.Alerts }
     | { section: 'settings'; settings: api.Settings; canEdit: boolean };
 
-export type View = { me: api.Me; scope: api.Branch[]; today: string; span: Range; loadedAt: number; data: Data };
+export type View = { me: api.Me; scope: api.Branch[]; today: string; span: Range; loadedAt: number; data: Data; asked?: string };
 
 /** Each section asks only for what it shows. The summary brings the stretch it is compared with. */
 /** Weeks: the last twelve; months: the last twelve; years: this one so far, each against the year before. */
@@ -95,6 +95,8 @@ function Dashboard() {
     const [view, setView] = useState<View | null>(null), [error, setError] = useState(''), [loading, setLoading] = useState(true), [reading, setReading] = useState(false);
     const [by, setBy] = useState<api.Trend['by']>('month'), [more, setMore] = useState(false), [alertCount, setAlertCount] = useState(0);
     const ask = useRef(0);
+    // What the screen is asking for; while the view on hand answers something else, the skeleton stands in.
+    const asking = [section, branch, period, custom?.from, custom?.to, by].join('|');
     const load = useCallback(async () => {
 
         const mine = ++ask.current;
@@ -109,7 +111,7 @@ function Dashboard() {
             const span = range(period, today, custom ?? { from: shiftDay(today, -29), to: today });
             const [data, alerts] = await Promise.all([fetchSection(section, period, span, by, today, branch || undefined), api.alerts(branch || undefined).catch(() => null)]);
 
-            if (mine === ask.current) { setView({ me, scope, today, span, loadedAt: Date.now(), data }); setError(''); if (alerts) setAlertCount(alerts.alerts.filter(a => a.level !== 'info').length); }
+            if (mine === ask.current) { setView({ me, scope, today, span, loadedAt: Date.now(), data, asked: [section, branch, period, custom?.from, custom?.to, by].join('|') }); setError(''); if (alerts) setAlertCount(alerts.alerts.filter(a => a.level !== 'info').length); }
 
         } catch (e) { if (mine === ask.current) setError(message(e)); } finally { if (mine === ask.current) setLoading(false); }
 
@@ -176,8 +178,8 @@ function Dashboard() {
 
         </div>
         {error && <div className="banner" role="alert"><CircleAlert size={18} /><span>{error}{view && ' Lo que ves es de la última actualización.'}</span></div>}
-        {!reading && (!view || view.data.section !== section) && !error && <main className="waiting" aria-busy="true">{view ? 'Cargando…' : 'Cargando tus sucursales…'}</main>}
-        {reading ? <Privacy close={() => setReading(false)} /> : view && view.data.section === section && <Content view={view} period={period} choose={setBranch} chosen={branch} by={by} chooseBy={setBy} />}
+        {!reading && !error && (!view || view.asked !== asking) && <Skeleton summary={section === 'summary'} />}
+        {reading ? <Privacy close={() => setReading(false)} /> : view && view.data.section === section && (view.asked === asking || error) && <Content view={view} period={period} choose={setBranch} chosen={branch} by={by} chooseBy={setBy} />}
         {!reading && <footer className="foot"><button className="link quiet-link" onClick={() => setReading(true)}>Aviso de privacidad</button></footer>}
 
     </div>;
@@ -283,14 +285,14 @@ function SummaryView({ view, data, period, choose, chosen }: { view: View; data:
                         : <Versus now={comparable} before={before.totals.net} against={against} />}
 
                 </div>
-                {oneDay && summary.hours.length > 0 && metrics.length > 1 && <div className="metric-tabs" role="group" aria-label="Cifra de la gráfica">{metrics.map(m => <button key={m.id} aria-pressed={metric === m.id} onClick={() => setMetric(m.id)}>{m.label}</button>)}</div>}
+                {oneDay && metrics.length > 1 && <div className="metric-tabs" role="group" aria-label="Cifra de la gráfica">{metrics.map(m => <button key={m.id} aria-pressed={metric === m.id} onClick={() => setMetric(m.id)}>{m.label}</button>)}</div>}
 
             </div>
             <Behind rows={scope.filter(b => summary.partial.includes(b.licenseId))} loadedAt={loadedAt} />
             <OutOfRange branches={view.me.branches} ids={summary.outOfRange} />
             {oneDay
-                ? (summary.hours.length ? <Hours hours={summary.hours} cutoff={cutoff} now={today ? clock : null} metric={metric} before={before.hours} beforeLabel={beforeName} /> : <p className="quiet">Sin ventas cerradas en este periodo.</p>)
-                : <div className="hero-chart"><h2>Por día</h2>{summary.days.length ? <Days days={summary.days} span={span} /> : <p className="quiet">Sin ventas cerradas en este periodo.</p>}</div>}
+                ? <Hours hours={summary.hours} cutoff={cutoff} now={today ? clock : null} metric={metric} before={before.hours} beforeLabel={beforeName} />
+                : <div className="hero-chart"><h2>Por día</h2><Days days={summary.days} span={span} /></div>}
 
         </section>
         <div className="stats">{stats.map(s => <section className="stat" key={s.label} aria-label={s.label}>
@@ -306,7 +308,7 @@ function SummaryView({ view, data, period, choose, chosen }: { view: View; data:
             {today && <Now rows={scope} />}
             {!oneDay && <Block title="Horas pico" className="hours-block">
 
-                {!onlyLite ? summary.hours.length ? <Hours hours={summary.hours} cutoff={cutoff} now={null} /> : <p className="quiet">Sin ventas cerradas en este periodo.</p> : null}
+                {!onlyLite ? <Hours hours={summary.hours} cutoff={cutoff} now={null} /> : null}
                 <ProNote branches={view.scope} lite={summary.lite} locked="Las horas pico de varios días son del plan Pro." />
 
             </Block>}
@@ -316,9 +318,9 @@ function SummaryView({ view, data, period, choose, chosen }: { view: View; data:
         <div className="col">
 
             {(scope.length > 1 || chosen) && <Branches rows={scope} all={!chosen} today={today} choose={choose} loadedAt={loadedAt} before={fair ? before.branches : null} />}
-            {channels.length > 1 && <Block title="Por canal"><Rows label="Ventas por canal" rows={channels.map(c => ({ key: c.channel, name: channelLabel(c.channel), value: c.net, note: <>{plural(c.tickets, 'cuenta', 'cuentas')} · {percent(c.net, sum(channels, x => x.net))}{fair && <Delta now={c.net} before={before.channels.find(b => b.channel === c.channel)?.net ?? 0} />}</> }))} /><ProNote branches={view.scope} lite={summary.lite} locked="" /></Block>}
+            {<Block title="Por canal"><Rows label="Ventas por canal" empty="Sin ventas cerradas en este periodo." rows={channels.map(c => ({ key: c.channel, name: channelLabel(c.channel), value: c.net, note: <>{plural(c.tickets, 'cuenta', 'cuentas')} · {percent(c.net, sum(channels, x => x.net))}{fair && <Delta now={c.net} before={before.channels.find(b => b.channel === c.channel)?.net ?? 0} />}</> }))} /><ProNote branches={view.scope} lite={summary.lite} locked="" /></Block>}
             <AreasBlock areas={summary.areas} />
-            {totals.tickets > 0 && !onlyLite && <Block title="Descuentos y cancelaciones" className="adjust">
+            {!onlyLite && <Block title="Descuentos y cancelaciones" className="adjust">
 
                 <Facts items={[
                     ['Descuentos', <>{money(totals.discounts)}{fair && <Delta now={totals.discounts} before={before.totals.discounts} good={-1} />}</>],
@@ -365,7 +367,7 @@ function Now({ rows }: { rows: api.Summary['branches'] }) {
 
     const live = rows.filter(r => r.live && !r.stale).map(r => r.live!);
 
-    if (!live.length) return null;
+    if (!live.length) return <Block title="Ahora mismo" className="now"><div className="chart-empty"><span /><span /><p>Ninguna sucursal en línea envía el piso en este momento.</p></div></Block>;
 
     const add = (read: (l: api.Live) => number) => live.reduce((total, l) => total + read(l), 0);
 

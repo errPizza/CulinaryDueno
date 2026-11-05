@@ -23,12 +23,13 @@ function Bars({ columns, mark, now, peakNote, head, shown = money, valueLabel = 
     const current = columns.find(c => c.key === picked) ?? peak;
     const every = Math.ceil(columns.length / 7);
     const ghosts = ghostLabel !== undefined && columns.some(c => c.ghost);
+    const none = columns.every(c => !c.value && !c.tickets);
 
     return <figure className="hours">
 
         <div className="hours-head">
 
-            <figcaption aria-live="polite"><b>{current.label}</b> {shown(current.value)} · {plural(current.tickets, 'cuenta', 'cuentas')}{picked === null && ` · ${peakNote}`}{ghosts && current.ghost != null && <span className="was"> · {ghostLabel.toLowerCase()} {shown(current.ghost)}</span>}</figcaption>
+            <figcaption aria-live="polite">{none && picked === null ? <>Sin ventas cerradas en este periodo{ghosts ? '.' : ''}</> : <><b>{current.label}</b> {shown(current.value)} · {plural(current.tickets, 'cuenta', 'cuentas')}{picked === null && ` · ${peakNote}`}</>}{ghosts && current.ghost != null && <span className="was"> · {ghostLabel.toLowerCase()} {shown(current.ghost)}</span>}</figcaption>
             {ghosts && <span className="hours-key" aria-hidden="true"><span><i className="now-key" />{valueLabel}</span><span><i className="was-key" />{ghostLabel}</span></span>}
 
         </div>
@@ -43,7 +44,7 @@ function Bars({ columns, mark, now, peakNote, head, shown = money, valueLabel = 
 
         </div>
         <div className="hours-axis" aria-hidden="true">{columns.map((c, i) => <span key={c.key}>{i % every === 0 ? c.tick : ''}</span>)}</div>
-        <details>
+        {!none && <details>
 
             <summary>Ver como tabla</summary>
             <table>
@@ -53,7 +54,7 @@ function Bars({ columns, mark, now, peakNote, head, shown = money, valueLabel = 
 
             </table>
 
-        </details>
+        </details>}
 
     </figure>;
 }
@@ -70,7 +71,9 @@ export function Hours({ hours, cutoff, now, metric = 'net', before, beforeLabel 
     const earlier = new Map((before ?? []).map(h => [h.hour, h]));
     const ordered = hours.map(h => dayOrder(h.hour, cutoff));
     const running = now === null ? null : dayOrder(now, cutoff);
-    const first = Math.min(...ordered, running ?? 24), last = Math.max(...ordered, running ?? 0);
+    // A day without sales still shows the usual service, 08:00 to 23:00, around the hour running.
+    const usual = ordered.length ? [] : [dayOrder(8, cutoff), dayOrder(23, cutoff)];
+    const first = Math.min(...ordered, ...usual, running ?? 24), last = Math.max(...ordered, ...usual, running ?? 0);
     const columns = Array.from({ length: last - first + 1 }, (_, i) => {
 
         const hour = (first + i + cutoff) % 24, row = known.get(hour);

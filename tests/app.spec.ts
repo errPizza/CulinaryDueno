@@ -286,7 +286,9 @@ test('las horas siguen el orden del servicio y cada barra dice su cifra', async 
 
     await mock(page);
     await page.goto('/');
-    await page.getByRole('button', { name: /Ventas de hoy/ }).waitFor({ state: 'detached' }).catch(() => {});
+    // The skeleton comes first; the chart replaces it once the summary arrives.
+    await expect(page.locator('.loading')).toHaveCount(0);
+    await page.locator('.hours-plot button').first().waitFor();
     const labels = await page.locator('.hours-plot button').evaluateAll(all => all.map(b => b.getAttribute('aria-label')!.slice(0, 5)));
     expect(labels.indexOf('01:00')).toBeGreaterThan(labels.indexOf('19:00'));
     await page.getByRole('button', { name: /^14:00/ }).hover();
@@ -523,5 +525,34 @@ test('sólo con sucursales Lite, las áreas nuevas también lo dicen', async ({ 
     await page.goto('/');
     await openMore(page, 'Cocina');
     await expect(page.getByRole('heading', { name: 'Cocina es del plan Pro' })).toBeVisible();
+
+});
+
+test('mientras carga hay esqueletos, y sin ventas las gráficas se ven vacías', async ({ page }) => {
+
+    await mock(page, { branches: [centro] });
+    let release = () => {};
+    const held = new Promise<void>(go => { release = go; });
+    const zero = { tickets: 0, people: 0, gross: 0, discounts: 0, net: 0, tax: 0, deliveryFees: 0, voidedCount: 0, voidedAmount: 0, comps: 0, staffMeals: 0, averageTicket: 0, averagePerson: 0 };
+    await page.route('https://servidor.test/owner/v1/stats/summary**', async route => {
+
+        if (route.request().method() === 'OPTIONS') return route.fallback();
+        await held;
+        const url = new URL(route.request().url());
+        await route.fulfill({ headers: { 'access-control-allow-origin': '*' }, json: { from: url.searchParams.get('from'), to: url.searchParams.get('to'), lite: [], outOfRange: [], totals: zero, partial: [], branches: [{ ...centro, ...zero, hasData: false, openDays: 0 }], days: [], hours: [], channels: [], payments: [], refunds: [], areas: [], shifts: [] } });
+
+    });
+    await page.goto('/');
+    await expect(page.locator('.loading .sk-hero')).toBeVisible();
+    await expect(page.getByText('Cargando')).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/cargando.png', fullPage: true });
+    release();
+    await expect(page.locator('.figure')).toHaveText('$0.00');
+    await expect(page.locator('.hours-plot button').first()).toBeVisible();
+    await expect(page.locator('.hours figcaption')).toContainText('Sin ventas cerradas');
+    await expect(page.getByRole('heading', { name: 'Por canal' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Por turno' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Descuentos y cancelaciones' })).toBeVisible();
+    await page.screenshot({ path: 'test-results/sin-ventas.png', fullPage: true });
 
 });
