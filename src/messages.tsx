@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, LifeBuoy, Megaphone, SendHorizontal, Store } from 'lucide-react';
+import { LifeBuoy, Megaphone, SendHorizontal, Store } from 'lucide-react';
 import * as api from './api';
 import type { View } from './app';
 import { message, plural, seenAt } from './format';
@@ -10,68 +10,70 @@ import { Block } from './parts';
 
 const STATUS: Record<api.SupportTicket['status'], string> = { open: 'Esperando respuesta', answered: 'Respondido', closed: 'Cerrado' };
 const when = (at: string) => new Date(at).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' });
+type Open = { kind: 'branch' | 'ticket'; id: string };
 
 export function MessagesView({ view, data, refresh }: { view: View; data: { inbox: api.Inbox }; refresh: () => void }) {
 
-    const [inbox, setInbox] = useState(data.inbox), [open, setOpen] = useState<string | null>(null), [ticket, setTicket] = useState<string | null>(null), [asking, setAsking] = useState(false);
     const branches = view.me.branches;
+    const [inbox, setInbox] = useState(data.inbox);
+    // The thread that waits for the owner opens first; otherwise the first branch.
+    const [open, setOpen] = useState<Open | null>(() => { const waiting = data.inbox.branches.find(b => b.unread > 0)?.licenseId ?? branches[0]?.licenseId; return waiting ? { kind: 'branch', id: waiting } : null; });
     const reload = async () => { try { setInbox(await api.inbox()); } catch { /* the next refresh brings it */ } refresh(); };
 
     useEffect(() => setInbox(data.inbox), [data.inbox]);
 
-    const chosen = branches.find(b => b.licenseId === open);
-    const chosenTicket = inbox.support.find(t => t.id === ticket);
+    const unread = inbox.branches.reduce((t, b) => t + b.unread, 0);
+    const chosen = open?.kind === 'branch' ? branches.find(b => b.licenseId === open.id) : undefined;
+    const ticket = open?.kind === 'ticket' ? inbox.support.find(t => t.id === open.id) : undefined;
 
     return <main className="report messages">
 
-        <section className="headline" aria-label="Mensajes">
+        <div className="row msgs">
 
-            <h1>Mensajes</h1>
-            <p className="lead">Escribe a tus sucursales o al soporte de Culinary. Las sucursales lo leen en el punto de venta y contestan desde ahí.</p>
+            <section className="block threads-card" aria-label="Conversaciones">
 
-        </section>
-        <div className="col">
+                <div className="block-head"><h2>{branches.length > 1 ? 'Sucursales' : 'Tu sucursal'}</h2>{unread > 0 && <small>{plural(unread, 'sin leer', 'sin leer')}</small>}</div>
+                {!branches.length ? <p className="quiet">Aún no hay sucursales en tu cuenta.</p> : <ol className="threads" aria-label="Conversaciones con sucursales">{branches.map(b => {
 
-            {chosen
-                ? <BranchThread key={chosen.licenseId} branch={chosen} inbox={inbox} back={() => { setOpen(null); void reload(); }} sent={reload} />
-                : <Block title={branches.length > 1 ? 'Sucursales' : 'Tu sucursal'}>
+                    const line = inbox.branches.find(x => x.licenseId === b.licenseId);
 
-                    {branches.length > 1 && <Composer label="Mensaje a todas las sucursales" placeholder="Por ejemplo: el lunes hay junta de gerentes a las 9" action={`Enviar a las ${branches.length}`} Icon={Megaphone} send={async text => { const { sent } = await api.sendToBranches([], text); await reload(); return `Enviado a ${plural(sent, 'sucursal', 'sucursales')}.`; }} />}
-                    {!branches.length ? <p className="quiet">Aún no hay sucursales en tu cuenta.</p> : <ol className="threads" aria-label="Conversaciones con sucursales">{branches.map(b => {
+                    return <li key={b.licenseId}><button aria-current={open?.kind === 'branch' && open.id === b.licenseId} onClick={() => setOpen({ kind: 'branch', id: b.licenseId })}>
 
-                        const line = inbox.branches.find(x => x.licenseId === b.licenseId);
+                        <span className="thread-icon" aria-hidden="true"><Store size={16} /></span>
+                        <span className="thread-text"><b>{b.name}</b><small>{line?.last ? `${line.last.author === 'owner' ? 'Tú: ' : `${line.last.name}: `}${line.last.body}` : 'Sin mensajes todavía'}</small></span>
+                        <span className="thread-side">{line?.last && <time>{seenAt(line.last.createdAt)}</time>}{(line?.unread ?? 0) > 0 && <span className="count" aria-label={plural(line!.unread, 'mensaje sin leer', 'mensajes sin leer')}>{line!.unread}</span>}</span>
 
-                        return <li key={b.licenseId}><button onClick={() => setOpen(b.licenseId)}>
+                    </button></li>;
 
-                            <span className="thread-icon" aria-hidden="true"><Store size={18} /></span>
-                            <span className="thread-text"><b>{b.name}</b><small>{line?.last ? `${line.last.author === 'owner' ? 'Tú: ' : ''}${line.last.body}` : 'Sin mensajes todavía'}</small></span>
-                            <span className="thread-side">{line?.last && <time>{seenAt(line.last.createdAt)}</time>}{(line?.unread ?? 0) > 0 && <span className="count" aria-label={plural(line!.unread, 'mensaje sin leer', 'mensajes sin leer')}>{line!.unread}</span>}</span>
+                })}</ol>}
+                <h2 className="threads-title">Soporte de Culinary</h2>
+                {inbox.support.length ? <ol className="threads" aria-label="Tus solicitudes al soporte">{inbox.support.map(t => <li key={t.id}><button aria-current={open?.kind === 'ticket' && open.id === t.id} onClick={() => setOpen({ kind: 'ticket', id: t.id })}>
 
-                        </button></li>;
+                    <span className="thread-icon" aria-hidden="true"><LifeBuoy size={16} /></span>
+                    <span className="thread-text"><b>{t.subject}</b><small>{t.messages.at(-1)?.author === 'admin' ? `Soporte: ${t.messages.at(-1)!.body}` : `${branchName(branches, t.licenseId)} · ${seenAt(t.updatedAt)}`}</small></span>
+                    <span className={`status ${t.status}`}>{STATUS[t.status]}</span>
 
-                    })}</ol>}
+                </button></li>)}</ol> : <p className="note first" style={{ margin: '0 10px' }}>Dudas de tu cuenta, licencia, facturación o de cómo usar Culinary.</p>}
 
-                </Block>}
+            </section>
+            {ticket ? <SupportThread ticket={ticket} branches={branches} changed={reload} />
+                : chosen ? <BranchThread key={chosen.licenseId} branch={chosen} inbox={inbox} sent={reload} />
+                : <Block title="Conversación"><p className="quiet">Elige una sucursal o una solicitud.</p></Block>}
+            <div className="col">
 
-        </div>
-        <div className="col">
+                {branches.length > 1 && <Block title="Mensaje a todas" meta={plural(branches.length, 'sucursal', 'sucursales')}>
 
-            {chosenTicket
-                ? <SupportThread ticket={chosenTicket} branches={branches} back={() => setTicket(null)} changed={reload} />
-                : <Block title="Soporte de Culinary">
-
-                    <p className="note first">Dudas de tu cuenta, de tu licencia, de facturación o de cómo usar Culinary. Te contesta el equipo de soporte y la respuesta aparece aquí.</p>
-                    {asking
-                        ? <NewTicket branches={branches} cancel={() => setAsking(false)} created={async id => { setAsking(false); await reload(); setTicket(id); }} />
-                        : <button className="ghost" onClick={() => setAsking(true)}><LifeBuoy size={18} />Escribir al soporte</button>}
-                    {inbox.support.length > 0 && <ol className="threads" aria-label="Tus solicitudes al soporte">{inbox.support.map(t => <li key={t.id}><button onClick={() => setTicket(t.id)}>
-
-                        <span className="thread-text"><b>{t.subject}</b><small>{branchName(branches, t.licenseId)} · {seenAt(t.updatedAt)}</small></span>
-                        <span className={`status ${t.status}`}>{STATUS[t.status]}</span>
-
-                    </button></li>)}</ol>}
+                    <Composer label="Mensaje a todas las sucursales" placeholder="Por ejemplo: el lunes hay junta de gerentes a las 9" action={`Enviar a las ${branches.length}`} Icon={Megaphone} send={async text => { const { sent } = await api.sendToBranches([], text); await reload(); return `Enviado a ${plural(sent, 'sucursal', 'sucursales')}.`; }} />
+                    <p className="note">Cada sucursal lo ve marcado como «A todas las sucursales».</p>
 
                 </Block>}
+                <Block title="Escribir al soporte">
+
+                    <NewTicket branches={branches} created={async id => { await reload(); setOpen({ kind: 'ticket', id }); }} />
+
+                </Block>
+
+            </div>
 
         </div>
 
@@ -80,7 +82,7 @@ export function MessagesView({ view, data, refresh }: { view: View; data: { inbo
 
 const branchName = (branches: api.Branch[], licenseId: string) => branches.find(b => b.licenseId === licenseId)?.name ?? 'Sucursal';
 
-function BranchThread({ branch, inbox, back, sent }: { branch: api.Branch; inbox: api.Inbox; back: () => void; sent: () => Promise<void> }) {
+function BranchThread({ branch, inbox, sent }: { branch: api.Branch; inbox: api.Inbox; sent: () => Promise<void> }) {
 
     const [messages, setMessages] = useState<api.Message[] | null>(null), [error, setError] = useState('');
     const end = useRef<HTMLDivElement>(null);
@@ -93,9 +95,7 @@ function BranchThread({ branch, inbox, back, sent }: { branch: api.Branch; inbox
 
     return <section className="block conversation" aria-label={`Conversación con ${branch.name}`}>
 
-        <button className="link back" onClick={back}><ArrowLeft size={18} aria-hidden="true" />Todas las conversaciones</button>
-        <h2>{branch.name}</h2>
-        {branch.stale && <p className="plan-note">Esta sucursal no reporta desde {seenAt(branch.lastSeenAt).toLowerCase()}. Recibirá el mensaje cuando vuelva a conectarse.</p>}
+        <div className="conv-head"><span className="thread-icon" aria-hidden="true"><Store size={16} /></span><div><h2>{branch.name}</h2><small>{branch.stale ? `Sin señal ${seenAt(branch.lastSeenAt).toLowerCase()}: lo recibirá al volver a conectarse` : 'Lo leen los gerentes en el punto de venta'}</small></div></div>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="bubbles" aria-live="polite">
 
@@ -105,18 +105,16 @@ function BranchThread({ branch, inbox, back, sent }: { branch: api.Branch; inbox
             <div ref={end} />
 
         </div>
-        <Composer label={`Mensaje a ${branch.name}`} placeholder="Escribe tu mensaje" action="Enviar" Icon={SendHorizontal} send={async text => { await api.sendToBranches([branch.licenseId], text); await load(); await sent(); return ''; }} />
+        <Composer label={`Mensaje a ${branch.name}`} placeholder={`Escribe a ${branch.name}…`} action="Enviar" Icon={SendHorizontal} send={async text => { await api.sendToBranches([branch.licenseId], text); await load(); await sent(); return ''; }} />
 
     </section>;
 }
 
-function SupportThread({ ticket, branches, back, changed }: { ticket: api.SupportTicket; branches: api.Branch[]; back: () => void; changed: () => Promise<void> }) {
+function SupportThread({ ticket, branches, changed }: { ticket: api.SupportTicket; branches: api.Branch[]; changed: () => Promise<void> }) {
 
     return <section className="block conversation" aria-label={`Solicitud: ${ticket.subject}`}>
 
-        <button className="link back" onClick={back}><ArrowLeft size={18} aria-hidden="true" />Todas las solicitudes</button>
-        <h2>{ticket.subject}</h2>
-        <p className="note first">{branchName(branches, ticket.licenseId)} · <span className={`status ${ticket.status}`}>{STATUS[ticket.status]}</span></p>
+        <div className="conv-head"><span className="thread-icon" aria-hidden="true"><LifeBuoy size={16} /></span><div><h2>{ticket.subject}</h2><small>{branchName(branches, ticket.licenseId)} · <span className={`status ${ticket.status}`}>{STATUS[ticket.status]}</span></small></div></div>
         <div className="bubbles" aria-live="polite">{ticket.messages.map(m => <div key={m.id} className={`bubble ${m.author === 'admin' ? 'theirs' : 'mine'}`}><p>{m.body}</p><small>{m.author === 'admin' ? 'Soporte de Culinary' : 'Tú'} · {when(m.createdAt)}</small></div>)}</div>
         {ticket.status === 'closed'
             ? <p className="quiet">El soporte cerró esta solicitud. Si necesitas algo más, abre una nueva.</p>
@@ -125,24 +123,24 @@ function SupportThread({ ticket, branches, back, changed }: { ticket: api.Suppor
     </section>;
 }
 
-function NewTicket({ branches, cancel, created }: { branches: api.Branch[]; cancel: () => void; created: (id: string) => Promise<void> }) {
+function NewTicket({ branches, created }: { branches: api.Branch[]; created: (id: string) => Promise<void> }) {
 
     const [subject, setSubject] = useState(''), [body, setBody] = useState(''), [about, setAbout] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
     const submit = async () => {
 
         setBusy(true); setError('');
 
-        try { const { ticket } = await api.askSupport(subject.trim(), body.trim(), about || undefined); await created(ticket.id); } catch (e) { setError(message(e)); setBusy(false); }
+        try { const { ticket } = await api.askSupport(subject.trim(), body.trim(), about || undefined); setSubject(''); setBody(''); await created(ticket.id); } catch (e) { setError(message(e)); } finally { setBusy(false); }
 
     };
 
     return <form className="ticket-form" onSubmit={e => { e.preventDefault(); void submit(); }}>
 
-        <label className="field">Asunto<input value={subject} maxLength={150} required onChange={e => setSubject(e.target.value)} /></label>
+        <label className="field">Asunto<input value={subject} maxLength={150} required placeholder="Por ejemplo: cambio de plan" onChange={e => setSubject(e.target.value)} /></label>
         {branches.length > 1 && <label className="field">Sucursal<select value={about} onChange={e => setAbout(e.target.value)}><option value="">Todo el negocio</option>{branches.map(b => <option key={b.licenseId} value={b.licenseId}>{b.name}</option>)}</select></label>}
-        <label className="field">Mensaje<textarea value={body} maxLength={4000} rows={5} required onChange={e => setBody(e.target.value)} /><small>No escribas contraseñas ni códigos de tu autenticador.</small></label>
+        <label className="field">Mensaje<textarea value={body} maxLength={4000} rows={4} required onChange={e => setBody(e.target.value)} /><small>No escribas contraseñas ni códigos de tu autenticador.</small></label>
         {error && <p className="error" role="alert">{error}</p>}
-        <div className="form-actions"><button type="button" className="ghost" onClick={cancel}>Cancelar</button><button className="primary" disabled={busy || !subject.trim() || !body.trim()}>{busy ? 'Enviando…' : 'Enviar al soporte'}</button></div>
+        <button className="ghost" disabled={busy || !subject.trim() || !body.trim()}><LifeBuoy size={16} aria-hidden="true" />{busy ? 'Enviando…' : 'Enviar al soporte'}</button>
 
     </form>;
 }
@@ -163,10 +161,10 @@ function Composer({ label, placeholder, action, Icon, send, max = 2000 }: { labe
 
     return <form className="composer" onSubmit={e => { e.preventDefault(); void submit(); }}>
 
-        <label className="field"><span>{label}</span><textarea value={text} rows={3} maxLength={max} placeholder={placeholder} onChange={e => { setText(e.target.value); setDone(''); }} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); } }} /></label>
+        <label className="field"><span className="sr">{label}</span><textarea aria-label={label} value={text} rows={3} maxLength={max} placeholder={placeholder} onChange={e => { setText(e.target.value); setDone(''); }} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); } }} /></label>
         {error && <p className="error" role="alert">{error}</p>}
         {done && <p className="sent" role="status">{done}</p>}
-        <button className="primary" disabled={busy || !text.trim()}><Icon size={18} aria-hidden="true" />{busy ? 'Enviando…' : action}</button>
+        <button className="primary" disabled={busy || !text.trim()}><Icon size={16} aria-hidden="true" />{busy ? 'Enviando…' : action}</button>
 
     </form>;
 }

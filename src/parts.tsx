@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowDownRight, ArrowUpRight, CircleAlert, Equal } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, CircleAlert, Equal, type LucideIcon } from 'lucide-react';
 import type { Branch } from './api';
 import { change, money, seenAt } from './format';
 
@@ -78,19 +78,18 @@ export function Skeleton({ summary }: { summary: boolean }) {
 
     const card = (rows: number, key: string) => <div className="sk-card" key={key}><span className="sk sk-title" />{Array.from({ length: rows }, (_, i) => <span className="sk sk-row" key={i} />)}</div>;
 
-    return <main className={summary ? 'report summary loading' : 'report loading'} aria-busy="true" aria-label="Cargando">
+    return <main className="report loading" aria-busy="true" aria-label="Cargando">
 
-        <div className="sk-hero">
+        <div className="hero-row"><div className="sk-hero">
 
             <span className="sk sk-label" />
             <span className="sk sk-figure" />
             <span className="sk sk-line" />
-            {summary && <div className="sk-bars">{[38, 64, 92, 70, 30, 22, 48, 80, 58, 26].map((h, i) => <span className="sk" key={i} style={{ height: `${h}%` }} />)}</div>}
+            {<div className="sk-bars" data-summary={summary || undefined}>{[38, 64, 92, 70, 30, 22, 48, 80, 58, 26].map((h, i) => <span className="sk" key={i} style={{ height: `${h}%` }} />)}</div>}
 
         </div>
-        {summary && <div className="stats">{['a', 'b', 'c'].map(k => <div className="sk-card sk-stat" key={k}><span className="sk sk-title" /><span className="sk sk-value" /><span className="sk sk-pill" /></div>)}</div>}
-        <div className="col">{card(3, 'a')}{card(4, 'b')}</div>
-        <div className="col">{card(3, 'c')}{card(2, 'd')}</div>
+        <div className="stats">{['a', 'b', 'c'].map(k => <div className="sk-card sk-stat" key={k}><span className="sk sk-title" /><span className="sk sk-value" /><span className="sk sk-pill" /></div>)}</div></div>
+        <div className="row r3">{card(3, 'a')}{card(4, 'b')}{card(3, 'c')}</div>
 
     </main>;
 }
@@ -139,7 +138,34 @@ export function Versus({ now, before, against }: { now: number; before: number; 
     return <div className="versus"><Delta now={now} before={before} /><span>{said}: {money(now)} contra {money(before)}</span></div>;
 }
 
-export function Block({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
+export function Block({ title, children, className, meta }: { title: string; children: ReactNode; className?: string; meta?: ReactNode }) {
 
-    return <section className={className ? `block ${className}` : 'block'}><h2>{title}</h2>{children}</section>;
+    return <section className={className ? `block ${className}` : 'block'}>{meta === undefined ? <h2>{title}</h2> : <div className="block-head"><h2>{title}</h2><small>{meta}</small></div>}{children}</section>;
+}
+
+/** A supporting figure beside the graphite card: what it is, its value, and how it moved or what it means. */
+export function StatCard({ label, value, Icon, children }: { label: string; value: ReactNode; Icon?: LucideIcon; children?: ReactNode }) {
+
+    return <section className="stat" aria-label={label}>
+
+        <span className="stat-label">{label}</span>
+        {Icon && <Icon size={16} className="stat-icon" aria-hidden="true" />}
+        <span className="stat-value">{value}</span>
+        {children && <span className="stat-cmp">{children}</span>}
+
+    </section>;
+}
+
+/** The graphite card and, beside it on the desk, its three supporting figures. */
+export function HeroRow({ hero, stats }: { hero: ReactNode; stats?: ReactNode }) {
+
+    return <div className="hero-row">{hero}{stats && <div className="stats">{stats}</div>}</div>;
+}
+
+/** Amounts split in pesos and cents, the cents smaller, so the pesos read first. */
+export function Amount({ text }: { text: string }) {
+
+    const dot = text.lastIndexOf('.');
+
+    return dot < 0 || !text.includes('$') ? <>{text}</> : <>{text.slice(0, dot)}<small>{text.slice(dot)}</small></>;
 }

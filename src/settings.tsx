@@ -36,13 +36,8 @@ export function SettingsView({ view, data }: { view: View; data: { settings: api
 
     return <main className="report settings">
 
-        <section className="headline" aria-label="Ajustes del panel">
-
-            <h1>Ajustes del panel</h1>
-            <p className="lead">Cambian cómo se leen las cifras, no la sucursal.</p>
-            {!edit && <p className="plan-note">Sólo el dueño puede cambiarlos.</p>}
-
-        </section>
+        {!edit && <p className="plan-note">Sólo el dueño puede cambiarlos.</p>}
+        <div className="row r2">
         <div className="col">
 
             <Block title="Turnos">
@@ -129,6 +124,8 @@ export function SettingsView({ view, data }: { view: View; data: { settings: api
                 <button className="primary" onClick={() => void save()} disabled={busy}>{busy ? 'Guardando…' : 'Guardar ajustes'}</button>
 
             </div>}
+
+        </div>
 
         </div>
 

@@ -23,7 +23,18 @@ async function openMore(page: Page, name: string) {
     else await page.locator('.sections > .side-item').filter({ hasText: name }).click();
 }
 
-async function mock(page: Page, { branches = [centro, norte, nueva], signedIn = true }: { branches?: any[]; signedIn?: boolean } = {}) {
+// The branch's intake key, as the branch registers it: the test keeps the private half to open what the app seals.
+let intake: { spki: string; sha256: string; privateKey: CryptoKey } | null = null;
+async function intakeKey() {
+
+    const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']) as CryptoKeyPair;
+    const spki = new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey));
+
+    return { spki: Buffer.from(spki).toString('base64url'), sha256: Buffer.from(await crypto.subtle.digest('SHA-256', spki)).toString('hex'), privateKey: pair.privateKey };
+}
+const business = { rfc: 'EKU9003173C9', name: 'ESCUELA KEMPER URGATE', postalCode: '42501', regime: '601' };
+
+async function mock(page: Page, { branches = [centro, norte, nueva], signedIn = true, role = 'owner' }: { branches?: any[]; signedIn?: boolean; role?: 'owner' | 'manager' } = {}) {
 
     const calls: string[] = [];
 
@@ -40,7 +51,12 @@ async function mock(page: Page, { branches = [centro, norte, nueva], signedIn = 
 
         const reply = (json: unknown, status = 200) => route.fulfill({ status, headers: cors, json });
 
-        if (url.pathname === '/owner/v1/me') return reply({ account: { id: '1', email: 'dueno@ejemplo.mx', role: 'owner' }, branches });
+        if (url.pathname === '/owner/v1/me') return reply({ account: { id: '1', email: 'dueno@ejemplo.mx', role }, branches });
+        if (url.pathname === '/owner/v1/fiscal') return role === 'owner' ? reply({ branches: [
+            { licenseId: 'c', branchName: 'Centro', business, intake: intake && { spki: intake.spki, sha256: intake.sha256, since: seen(60) }, csd: { loaded: true, rfc: business.rfc, serial: '30001000000500003416', notBefore: seen(60 * 24 * 300), notAfter: new Date(Date.now() + 20 * 86_400_000).toISOString(), loadedAt: seen(60) }, last: null },
+            { licenseId: 'n', branchName: 'Polanco Norte con nombre largo', business: null, intake: null, csd: { loaded: false }, last: null }
+        ] }) : reply({ error: { code: 'forbidden', message: 'Sólo el dueño de la cuenta configura la facturación' } }, 403);
+        if (route.request().method() === 'POST' && url.pathname.startsWith('/owner/v1/fiscal/')) { const body = route.request().postDataJSON(); posted.push({ path: url.pathname, body }); return reply({ id: body.id, status: 'pending', at: seen(0) }, 202); }
         if (url.pathname === '/owner/v1/login') return route.request().postDataJSON().totp === '123456' ? reply({ token: 't', expiresAt: seen(-600) }) : reply({ error: { code: 'unauthorized', message: 'Correo, contraseña o código inválidos' } }, 401);
         if (url.pathname === '/owner/v1/logout') return reply({ ok: true });
         if (url.pathname === '/owner/v1/enroll') return reply({ email: 'nuevo@ejemplo.mx', totp: { secret: 'JBSWY3DPEHPK3PXP', uri: 'otpauth://totp/x?secret=JBSWY3DPEHPK3PXP' } }, 201);
@@ -163,7 +179,7 @@ test('una sucursal se elige en el selector o en la lista, y se vuelve a todas', 
     await page.goto('/');
     await page.locator('.ranking button').first().click();
     await expect(page.locator('.figure')).toHaveText('$14,494.75');
-    await expect(page.locator('.picker select')).toHaveValue('c');
+    await expect(page.getByLabel('Sucursal', { exact: true })).toHaveValue('c');
     expect(calls.filter(c => c.startsWith('/owner/v1/stats/')).at(-1)).toContain('branch=c');
     await page.getByRole('button', { name: 'Ver todas las sucursales' }).click();
     await expect(page.locator('.figure')).toHaveText('$17,705.50');
@@ -176,7 +192,8 @@ test('el periodo pide las fechas de negocio de la sucursal, no las del teléfono
 
     await page.goto('/');
     await page.getByRole('button', { name: '7 días' }).click();
-    await expect(page.locator('h1')).toHaveText('Ventas de los últimos 7 días');
+    await expect(page.locator('.headline h1')).toHaveText('Ventas de los últimos 7 días · todas las sucursales');
+    await expect(page.locator('.page-head h1')).toHaveText('Resumen de 7 días');
     await expect.poll(() => calls.some(c => c.startsWith(`/owner/v1/stats/summary?from=${back(6)}&to=${local}`))).toBe(true);
     await expect(page.getByText('Ahora mismo')).toHaveCount(0);
 
@@ -214,7 +231,7 @@ test('el rango libre pide dos fechas válidas y explica el error', async ({ page
     await page.getByLabel('Desde').fill(back(10));
     await expect(page.getByRole('alert')).toHaveCount(0);
     await expect.poll(() => calls.some(c => c.startsWith(`/owner/v1/stats/summary?from=${back(10)}&to=${back(3)}`))).toBe(true);
-    await expect(page.locator('h1')).toContainText('Ventas del');
+    await expect(page.locator('.headline h1')).toContainText('Ventas del');
 
 });
 
@@ -226,9 +243,8 @@ test('productos: margen sólo con receta, menos vendidos e inventario bajo', asy
     await page.getByRole('button', { name: 'Productos' }).click();
     await expect(page.locator('.figure')).toHaveText('$4,600.00');
     await expect.poll(() => calls.some(c => c.startsWith('/owner/v1/stats/products?'))).toBe(true);
-    await expect(page.locator('.facts').first()).toContainText('$2,400.00');
-    await expect(page.locator('.facts').first()).toContainText('66.7 %');
-    await expect(page.getByText(/No incluye 1 producto sin receta, que suman \$1,000.00/)).toBeVisible();
+    await expect(page.locator('.headline .versus')).toContainText('Margen estimado $2,400.00 · 66.7 %');
+    await expect(page.getByText(/Sin contar 1 producto sin receta, que suman \$1,000.00/)).toBeVisible();
     await expect(page.getByText('Tortilla de maíz')).toBeVisible();
     await expect(page.getByText(/quedan 40 pz, mínimo 100/)).toContainText('Centro');
     await page.getByText('Ver los 2 productos').click();
@@ -240,13 +256,17 @@ test('caja: cobros por método, arqueo con faltante y corte Z con reapertura', a
 
     await mock(page);
     await page.goto('/');
-    await page.getByRole('button', { name: 'Caja' }).click();
+    await page.getByRole('button', { name: 'Caja y cortes' }).click();
     await expect(page.locator('.figure')).toHaveText('$17,705.50');
     await expect(page.getByText('Tarjeta', { exact: true }).first()).toBeVisible();
-    await expect(page.locator('.closes')).toContainText('Faltan $50.00');
-    await expect(page.locator('.closes')).toContainText('Sobran $10.00');
-    await expect(page.locator('.closes')).toContainText('Arqueo ciego');
-    await expect(page.getByText(/1 cuenta se reabrió después de este corte/)).toContainText('$14,494.75');
+    const closes = page.locator('.block').filter({ has: page.getByRole('heading', { name: 'Cierres de caja' }) });
+    await expect(closes).toContainText('Faltan $50.00');
+    await expect(closes).toContainText('Sobran $10.00');
+    await expect(closes).toContainText('A ciegas');
+    await expect(closes).toContainText('1 cierre salió con faltante de efectivo por $50.00');
+    const z = page.locator('.block').filter({ has: page.getByRole('heading', { name: 'Cortes Z' }) });
+    await expect(z).toContainText('$14,494.75');
+    await expect(z).toContainText('1 reapertura · $505.25');
 
 });
 
@@ -255,11 +275,13 @@ test('personal: ventas y propinas por mesero, con su sucursal en el consolidado'
     await mock(page);
     await page.goto('/');
     await page.getByRole('button', { name: 'Personal' }).click();
-    await expect(page.locator('.figure')).toHaveText('$9,000.00');
-    await expect(page.locator('.ranking').first()).toContainText('Centro · 20 cuentas · ticket $450.00');
-    await expect(page.locator('.ranking').first()).toContainText('sólo propinas');
-    await page.locator('.picker select').selectOption('c');
-    await expect(page.locator('.ranking').first()).not.toContainText('Centro ·');
+    await expect(page.locator('.figure')).toHaveText('5.3 %');
+    const waiters = page.locator('.block').filter({ has: page.getByRole('heading', { name: 'Meseros' }) });
+    await expect(waiters).toContainText('Centro · 8 h');
+    await expect(waiters).toContainText('$9,000.00');
+    await expect(waiters).toContainText('Polanco Norte con nombre largo · sólo propinas');
+    await page.getByLabel('Sucursal', { exact: true }).selectOption('c');
+    await expect(waiters).not.toContainText('Centro ·');
 
 });
 
@@ -273,8 +295,8 @@ test('con planes mixtos, cada cifra Pro dice qué sucursal Lite no incluye', asy
     await expect(page.locator('.versus')).toContainText('sin Polanco Norte con nombre largo');
     await expect(page.locator('.versus')).toContainText('$14,494.75 contra $14,494.75');
     await expect(page.getByText('Sólo sucursales Pro: no incluye Polanco Norte con nombre largo').first()).toBeVisible();
-    await page.getByRole('button', { name: 'Caja' }).click();
-    await expect(page.locator('.facts').first()).toContainText('$14,494.75');
+    await page.getByRole('button', { name: 'Caja y cortes' }).click();
+    await expect(page.locator('.stat').first()).toContainText('$14,494.75');
     await expect(page.getByText(/Sólo sucursales Pro/)).toBeVisible();
 
 });
@@ -285,14 +307,14 @@ test('sólo con sucursales Lite, las áreas Pro lo dicen en vez de mostrar ceros
     await page.goto('/');
     await expect(page.locator('.figure')).toHaveText('$14,494.75');
     await expect(page.getByRole('button', { name: /Fechas/ })).toHaveAttribute('aria-disabled', 'true');
-    await expect(page.getByRole('heading', { name: 'Descuentos y cancelaciones' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: /^Descuentos/ })).toHaveCount(0);
     await page.getByRole('button', { name: '7 días' }).click();
     await expect(page.getByText('Las horas pico de varios días son del plan Pro.')).toBeVisible();
     await page.getByRole('button', { name: 'Productos' }).click();
     await expect(page.getByText('Tacos al pastor').first()).toBeVisible();
     await expect(page.getByText('Margen estimado')).toHaveCount(0);
     await expect(page.getByText('El costo y el margen son del plan Pro.')).toBeVisible();
-    await page.getByRole('button', { name: 'Caja' }).click();
+    await page.getByRole('button', { name: 'Caja y cortes' }).click();
     await expect(page.getByRole('heading', { name: 'Caja es del plan Pro' })).toBeVisible();
     await page.getByRole('button', { name: 'Personal' }).click();
     await expect(page.getByRole('heading', { name: 'Personal es del plan Pro' })).toBeVisible();
@@ -320,7 +342,7 @@ test('con una sola sucursal no estorban ni el selector ni el ranking', async ({ 
     await mock(page, { branches: [centro] });
     await page.goto('/');
     await expect(page.locator('.figure')).toHaveText('$14,494.75');
-    await expect(page.locator('.picker')).toHaveCount(0);
+    await expect(page.getByLabel('Sucursal', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: /^Sucursal/ })).toHaveCount(0);
 
 });
@@ -391,9 +413,9 @@ for (const [name, width, height] of [['telefono', 360, 760], ['escritorio', 1280
 
         if (['Resumen', 'Productos', 'Caja', 'Personal'].includes(section)) await page.locator('.sections > button').filter({ hasText: section }).click();
         else await openMore(page, section);
-        await expect(page.locator('main h1')).toBeVisible();
+        await expect(page.locator('.page-head h1')).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), section).toBe(true);
-        for (const target of await page.locator('main button, .controls button, .controls select, .top button').all()) { const box = await target.boundingBox(); if (box && !(await target.evaluate(e => e.closest('.hours-plot')))) expect(box.height, await target.innerText()).toBeGreaterThanOrEqual(40); }
+        for (const target of await page.locator('main button, .controls button, .controls select, .top button').all()) { const box = await target.boundingBox(); if (box && !(await target.evaluate(e => e.closest('.hours-plot')))) expect(box.height, await target.innerText()).toBeGreaterThanOrEqual(width < 900 ? 40 : 32); }
         await page.screenshot({ path: `test-results/${name}-${colorScheme}-${section.toLowerCase()}.png`, fullPage: true });
 
     }
@@ -425,7 +447,7 @@ test('el aviso de privacidad se lee antes de entrar y desde el panel', async ({ 
     await page.goto('/');
     await page.getByRole('button', { name: 'Aviso de privacidad' }).click();
     await expect(page.getByRole('heading', { name: 'Aviso de privacidad' })).toBeVisible();
-    await expect(page.getByText(/nombre visible de cada persona/)).toBeVisible();
+    await expect(page.getByText(/nombre visible y el rol de cada persona/)).toBeVisible();
     await page.getByRole('button', { name: 'Volver' }).click();
     await page.getByLabel('Correo').fill('dueno@ejemplo.mx');
     await page.getByLabel('Contraseña').fill('una contraseña larga');
@@ -442,11 +464,11 @@ test('resumen: metas, turnos, áreas y lo que pasa ahora en el piso', async ({ p
 
     await mock(page);
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: 'Metas' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /^Meta de / })).toBeVisible();
     await expect(page.getByText(/Vas atrasado: a este ritmo cerrarías en \$50,000\.00/)).toBeVisible();
     await expect(page.getByRole('list', { name: 'Ventas por turno' })).toContainText('Comida · 12:00 a 18:00');
     await expect(page.getByRole('list', { name: 'Ventas por área' })).toContainText('Terraza');
-    await expect(page.locator('.block.now')).toContainText('Mesas libres');
+    await expect(page.locator('.block.now')).toContainText('Mesas ocupadas3de 12');
     await expect(page.locator('.block.now')).toContainText('En turno');
 
 });
@@ -458,11 +480,11 @@ test('productos: ingeniería de menú, precio sugerido, mix, costos que suben y 
     await page.getByRole('button', { name: 'Productos' }).click();
     await expect(page.getByRole('heading', { name: /Caballos de batalla/ })).toBeVisible();
     await expect(page.getByRole('heading', { name: /Enigmas/ })).toBeVisible();
-    await expect(page.getByText('Tacos al pastor: de $30.00 a $34.00')).toBeVisible();
+    await expect(page.locator('.block').filter({ has: page.getByRole('heading', { name: 'Precio sugerido' }) }).getByRole('row', { name: /Tacos al pastor/ })).toContainText('$34.00');
     await expect(page.getByRole('list', { name: 'Ventas por tipo' })).toContainText('Bebidas sin alcohol');
     await expect(page.getByText('Los martes venden 35 % menos que el promedio')).toBeVisible();
-    await expect(page.getByText('Centro · Aguacate subió 25 %')).toBeVisible();
-    await expect(page.getByText('Centro · Leche: caduca hoy')).toBeVisible();
+    await expect(page.locator('.block').filter({ has: page.getByRole('heading', { name: 'Costos que subieron' }) })).toContainText(/Aguacate\s*\+25 %\s*Centro · afecta Guacamole/);
+    await expect(page.locator('.block').filter({ has: page.getByRole('heading', { name: 'Lotes por caducar' }) })).toContainText('Leche: caduca hoyCentro · $25.00');
 
 });
 
@@ -471,11 +493,12 @@ test('personal: eficiencia, costo laboral, propinas por horas, horario sugerido 
     await mock(page);
     await page.goto('/');
     await page.getByRole('button', { name: 'Personal' }).click();
-    await expect(page.getByRole('list', { name: 'Eficiencia por persona' })).toContainText('$1,125.00 por hora');
-    await expect(page.getByText('Horas sobre tu meta de 30 %: 01:00 (600 %)')).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Eficiencia por persona' })).toContainText('12 mesas · 44 comensales');
+    await expect(page.locator('.block').filter({ has: page.getByRole('heading', { name: 'Meseros' }) })).toContainText('$1,125.00');
+    await expect(page.getByText('Horas sobre tu meta: 01:00 (600 %).')).toBeVisible();
     await expect(page.getByRole('list', { name: 'Reparto de propinas' })).toContainText('8 h 00 min');
     await expect(page.getByRole('list', { name: 'Ventas por repartidor' })).toContainText('Rafa');
-    await expect(page.getByText('Ana López: 9 cancelaciones')).toBeVisible();
+    await expect(page.getByText(/Ana López 9 cancelaciones por \$270\.00/)).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Personal sugerido para la próxima semana' })).toBeVisible();
 
 });
@@ -488,15 +511,16 @@ test('«Más» abre tendencia, pronóstico, rentabilidad, cocina, clientes y ale
 
     await more('Tendencia');
     await expect(page.locator('.figure')).toHaveText('$9,000.00');
-    await expect(page.getByText('20 % más que el mismo tramo del año pasado')).toBeVisible();
+    await expect(page.getByText('contra $7,500.00 del mismo tramo del año pasado')).toBeVisible();
+    await expect(page.locator('.page-head')).toContainText('Llevas 20 % más que el mismo tramo del año pasado.');
     await expect(page.getByRole('group', { name: 'Periodo' })).toBeHidden();
     await page.getByRole('button', { name: 'Años' }).click();
     await expect.poll(() => calls.some(c => c.includes('/stats/trend') && c.includes('by=year'))).toBe(true);
 
     await more('Pronóstico');
-    await expect(page.locator('.figure')).toHaveText('$10,200.00');
+    await expect(page.locator('.figure')).toHaveText('$71,400.00');
     await expect(page.getByText('Revolución Mexicana').first()).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Qué preparar' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Platillos a preparar' })).toBeVisible();
 
     await more('Rentabilidad');
     await expect(page.locator('.figure')).toHaveText('$4,550.00');
@@ -509,8 +533,9 @@ test('«Más» abre tendencia, pronóstico, rentabilidad, cocina, clientes y ale
     await expect(page.getByText('A domicilio: 80 % a tiempo')).toBeVisible();
 
     await more('Clientes');
-    await expect(page.locator('.figure')).toHaveText('320');
-    await expect(page.getByText('4.1 de 5').first()).toBeVisible();
+    await expect(page.locator('.figure')).toHaveText('37.5 %');
+    await expect(page.locator('.kpis')).toContainText('Clientes conocidos320');
+    await expect(page.getByText('4.6 de 5').first()).toBeVisible();
 
     await more('Alertas');
     await expect(page.locator('.alert.high')).toContainText('Leche caduca hoy');
@@ -569,7 +594,7 @@ test('mientras carga hay esqueletos, y sin ventas las gráficas se ven vacías',
     await expect(page.locator('.hours figcaption')).toContainText('Sin ventas cerradas');
     await expect(page.getByRole('heading', { name: 'Por canal' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Por turno' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Descuentos y cancelaciones' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Descuentos, cancelaciones y cortesías' })).toBeVisible();
     await page.screenshot({ path: 'test-results/sin-ventas.png', fullPage: true });
 
 });
@@ -580,10 +605,10 @@ test('sólo con Lite, las áreas Pro salen bloqueadas al instante, sin cargar ni
 
     await page.goto('/');
     await expect(page.locator('.figure')).toHaveText('$14,494.75');
-    await expect(page.getByRole('button', { name: 'Caja' })).toContainClass('is-locked');
+    await expect(page.getByRole('button', { name: 'Caja y cortes' })).toContainClass('is-locked');
     await expect(page.getByRole('button', { name: 'Productos' })).not.toContainClass('is-locked');
     await page.route('https://servidor.test/owner/v1/stats/cash**', route => new Promise(() => { void route; }));
-    await page.getByRole('button', { name: 'Caja' }).click();
+    await page.getByRole('button', { name: 'Caja y cortes' }).click();
     await expect(page.getByRole('heading', { name: 'Caja es del plan Pro' })).toBeVisible();
     await expect(page.locator('.loading')).toHaveCount(0);
     await expect(page.locator('.periods')).toHaveCount(0);
@@ -600,10 +625,10 @@ test('con planes mixtos nada se bloquea, salvo al elegir la sucursal Lite', asyn
     await mock(page, { branches: [centro, lite(norte)] });
     await page.goto('/');
     await expect(page.locator('.figure')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Caja' })).not.toContainClass('is-locked');
-    await page.locator('.picker select').selectOption('n');
-    await expect(page.getByRole('button', { name: 'Caja' })).toContainClass('is-locked');
-    await page.getByRole('button', { name: 'Caja' }).click();
+    await expect(page.getByRole('button', { name: 'Caja y cortes' })).not.toContainClass('is-locked');
+    await page.getByLabel('Sucursal', { exact: true }).selectOption('n');
+    await expect(page.getByRole('button', { name: 'Caja y cortes' })).toContainClass('is-locked');
+    await page.getByRole('button', { name: 'Caja y cortes' }).click();
     await expect(page.getByRole('heading', { name: 'Caja es del plan Pro' })).toBeVisible();
 
 });
@@ -627,7 +652,6 @@ test('mensajes: lista de sucursales con no leídos, conversación y respuesta', 
     await page.getByRole('button', { name: 'Enviar', exact: true }).click();
     await expect.poll(() => posted).toContainEqual({ path: '/owner/v1/messages/branches', body: { licenseIds: ['c'], message: 'Gracias, Ana' } });
     await expect(page.getByLabel('Mensaje a Centro')).toHaveValue('');
-    await page.getByRole('button', { name: 'Todas las conversaciones' }).click();
     await page.screenshot({ path: 'test-results/mensajes.png', fullPage: true });
 
 });
@@ -653,14 +677,87 @@ test('mensajes: escribir al soporte de Culinary y ver su respuesta', async ({ pa
     await expect(page.locator('.bubble.theirs')).toContainText('Hoy en la tarde.');
     await expect(page.locator('.bubble.theirs small')).toContainText('Soporte de Culinary');
     await page.getByLabel('Responder al soporte').fill('Gracias');
-    await page.getByRole('button', { name: 'Responder' }).click();
+    await page.getByRole('button', { name: 'Responder', exact: true }).click();
     await expect.poll(() => posted).toContainEqual({ path: '/owner/v1/support/t1/messages', body: { message: 'Gracias' } });
-    await page.getByRole('button', { name: 'Todas las solicitudes' }).click();
-    await page.getByRole('button', { name: 'Escribir al soporte' }).click();
     await page.getByLabel('Asunto').fill('Cambio de plan');
     await page.locator('.ticket-form select').selectOption('n');
     await page.locator('.ticket-form textarea').fill('Quiero pasar Norte a Pro');
     await page.getByRole('button', { name: 'Enviar al soporte' }).click();
     await expect.poll(() => posted).toContainEqual({ path: '/owner/v1/support', body: { subject: 'Cambio de plan', message: 'Quiero pasar Norte a Pro', licenseId: 'n' } });
+
+});
+
+/** A whole screen at once: the window grows to the page, because a full-page capture repaints sticky parts. */
+async function shot(page: Page, path: string, width: number, height: number) {
+
+    const tall = await page.evaluate(() => document.documentElement.scrollHeight);
+
+    await page.setViewportSize({ width, height: Math.max(height, tall) });
+    await page.waitForTimeout(150);
+    await page.screenshot({ path });
+    await page.setViewportSize({ width, height });
+}
+
+// Screens of every section for comparing with the approved design. Only with SHOTS=1: npx playwright test -g capturas
+for (const [name, width, height, scheme] of [['escritorio', 1440, 900, 'light'], ['telefono', 390, 844, 'light'], ['oscuro', 1440, 900, 'dark']] as const) test(`capturas de cada sección en ${name}`, async ({ page }) => {
+
+    test.skip(!process.env.SHOTS, 'Sólo al pedir capturas');
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme: scheme, reducedMotion: 'reduce' });
+    await mock(page);
+    await page.goto('/');
+    await expect(page.locator('.figure')).toBeVisible();
+    await shot(page, `test-results/v3/${name}-01-resumen.png`, width, height);
+    const sections = [['Productos', '02-productos'], ['Caja y cortes', '03-caja'], ['Personal', '04-personal'], ['Tendencia', '05-tendencia'], ['Pronóstico', '06-pronostico'], ['Rentabilidad', '07-rentabilidad'], ['Cocina', '08-cocina'], ['Clientes', '09-clientes'], ['Mensajes', '10-mensajes'], ['Alertas', '11-alertas'], ['Ajustes', '12-ajustes']] as const;
+    for (const [label, file] of sections) {
+
+        if (width >= 900) await page.locator('.sections > button').filter({ hasText: label }).first().click();
+        else if (['Productos', 'Caja y cortes', 'Personal'].includes(label)) await page.locator('.sections > button').filter({ hasText: label.split(' ')[0] }).first().click();
+        else await openMore(page, label);
+        await expect(page.locator('.loading')).toHaveCount(0);
+        await page.waitForTimeout(300);
+        await shot(page, `test-results/v3/${name}-${file}.png`, width, height);
+
+    }
+
+});
+
+test('facturación: sólo el dueño la ve, y los sellos salen cifrados para la sucursal', async ({ page }) => {
+
+    intake = await intakeKey();
+    await mock(page, { role: 'manager' });
+    await page.goto('/');
+    await expect(page.locator('.figure')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Facturación' })).toHaveCount(0);
+    await expect(page.getByRole('menuitem', { name: 'Facturación' })).toHaveCount(0);
+
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await mock(page);
+    await page.reload();
+    await openMore(page, 'Facturación');
+    await expect(page.getByText('Sellos cargados con éxito')).toContainText('en 20 días');
+    await expect(page.getByText('Tu proveedor aún no registra los datos fiscales')).toBeVisible();
+
+    const centroBlock = page.locator('section.block').filter({ hasText: 'EKU9003173C9' });
+    const cer = new Uint8Array([0x30, 0x82, 0x05, 0x01]), key = new Uint8Array([0x30, 0x82, 0x04, 0xfe]);
+    await centroBlock.getByLabel('Certificado (.cer)').setInputFiles({ name: '00001000000500003416.cer', mimeType: 'application/octet-stream', buffer: Buffer.from(cer) });
+    await centroBlock.getByLabel('Llave privada (.key)').setInputFiles({ name: 'Claveprivada_FIEL.key', mimeType: 'application/octet-stream', buffer: Buffer.from(key) });
+    await centroBlock.getByLabel('Contraseña de la llave privada').fill('12345678a');
+    await centroBlock.getByRole('button', { name: 'Reemplazar sellos' }).click();
+    await expect(centroBlock.getByText('Enviado cifrado')).toBeVisible();
+    await expect(centroBlock.getByLabel('Contraseña de la llave privada')).toHaveValue('');
+
+    // The server only sees ciphertext; the branch's key opens it with the license, the sending and its own hash.
+    const sent = posted.find(p => p.path === '/owner/v1/fiscal/c/csd')!;
+    expect(sent.body.intakeSha256).toBe(intake.sha256);
+    expect(JSON.stringify(sent.body)).not.toContain('12345678a');
+    const env = sent.body.envelope, b = (t: string) => new Uint8Array(Buffer.from(t, 'base64url'));
+    const context = new TextEncoder().encode(`culinary-csd-v1|c|${sent.body.id}|${intake.sha256}`);
+    const epk = await crypto.subtle.importKey('spki', b(env.epk), { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+    const shared = await crypto.subtle.deriveBits({ name: 'ECDH', public: epk }, intake.privateKey, 256);
+    const aes = await crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: b(env.salt), info: context }, await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']), { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    const plain = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b(env.iv), additionalData: context }, aes, b(env.ct))));
+    expect(plain).toEqual({ cer: Buffer.from(cer).toString('base64'), key: Buffer.from(key).toString('base64'), password: '12345678a' });
 
 });

@@ -205,3 +205,14 @@ export const branchThread = (licenseId: string) => request<{ messages: Message[]
 export const sendToBranches = (licenseIds: string[], message: string) => request<{ sent: number; at: string }>('POST', '/owner/v1/messages/branches', { licenseIds, message });
 export const askSupport = (subject: string, message: string, licenseId?: string) => request<{ ticket: SupportTicket }>('POST', '/owner/v1/support', { subject, message, ...(licenseId ? { licenseId } : {}) });
 export const replySupport = (id: string, message: string) => request<{ ticket: SupportTicket }>('POST', `/owner/v1/support/${encodeURIComponent(id)}/messages`, { message });
+export type Business = { rfc: string; name: string; postalCode: string; regime: string };
+export type FiscalBranch = {
+
+    licenseId: string; branchName: string; business: Business | null; intake: { spki: string; sha256: string; since: string } | null;
+    csd: { loaded: false } | { loaded: true; rfc: string; serial: string; notBefore: string; notAfter: string; loadedAt: string };
+    last: { id: string; status: 'pending' | 'loaded' | 'rejected' | 'expired'; message: string | null; at: string } | null;
+
+};
+// Only the account's owner reaches these; a manager gets 403.
+export const fiscal = () => request<{ branches: FiscalBranch[] }>('GET', '/owner/v1/fiscal');
+export const sendCsd = (licenseId: string, body: { id: string; intakeSha256: string; envelope: unknown }) => request<{ id: string; status: 'pending'; at: string }>('POST', `/owner/v1/fiscal/${encodeURIComponent(licenseId)}/csd`, body);

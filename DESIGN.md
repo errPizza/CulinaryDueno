@@ -1,4 +1,4 @@
-# Design — Culinary Dueño
+# Design — Culinary Dueño (v3)
 
 World: el corte del día visto en vivo. Una tarjeta grafito con la cifra que responde la pantalla y, alrededor, tarjetas blancas con lo que la explica. Lo que importa resalta; lo demás queda en gris.
 
@@ -22,6 +22,14 @@ World: el corte del día visto en vivo. Una tarjeta grafito con la cifra que res
 El tema sigue al sistema: el dueño consulta tanto a mediodía en la calle como de noche.
 
 Tipo: Inter Variable con cifras tabulares. Cifras grandes a 650–700 con tracking negativo; los centavos de la cifra principal van más chicos.
+
+## Layout (v3, aprobado el 2026-11-04)
+
+- **Escritorio:** barra lateral con «Viendo» (la sucursal), los grupos «Hoy» (Resumen, Productos, Caja y cortes, Personal) y «Análisis» (Tendencia, Pronóstico, Rentabilidad, Cocina, Clientes); abajo Mensajes, Alertas, Ajustes y la cuenta con su botón de salir.
+- **Encabezado de cada pantalla:** título y una frase con lo que importa ahora (`src/heads.tsx`); a la derecha el periodo, actualizar y la acción principal en ámbar.
+- **Fila protagonista:** la tarjeta grafito con su gráfica al pie y, a su lado, tres `StatCard` con icono y su cambio (`HeroRow`). Debajo, filas `.row.r3`, `.r21`, `.r2` de tarjetas blancas.
+- **Teléfono:** todo en una columna, el selector de sucursal y el periodo arriba, la barra flotante abajo. Objetivos de 40 px en teléfono y 32 px en escritorio.
+- La propuesta aprobada está en `diseño-v3/` (`propuesta.html` y sus PNG); `SHOTS=1 npx playwright test -g capturas` saca las pantallas reales en `test-results/v3/`.
 
 ## Rules
 

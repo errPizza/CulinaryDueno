@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
-import { CircleAlert, CloudRain, Info, TriangleAlert } from 'lucide-react';
+import { CalendarDays, CircleAlert, Clock, CloudRain, Info, ReceiptText, Star, Sun, Tag, TriangleAlert, Undo2, Users, UtensilsCrossed } from 'lucide-react';
 import type * as api from './api';
 import type { View } from './app';
-import { branchOf, Headline, Locked, sum, type Of } from './detail';
+import { branchOf, Headline, HeroBars, Locked, sum, type Of } from './detail';
 import { bps, dayName, duration, hourLabel, hoursWorked, kindLabel, modeLabel, money, plural, shortDate, tenths, WEEKDAYS, whole } from './format';
-import { allLite, Block, Delta, Facts, ProNote, Rows } from './parts';
+import { allLite, Block, Delta, Facts, HeroRow, ProNote, Rows, StatCard } from './parts';
 
 // The second half of the panel: goals, shifts and areas on the summary, and the Pro areas built on what the branches
 // measure beyond the sale. Every figure comes from the server; the app only words it.
@@ -25,44 +25,54 @@ function Progress({ name, value, of, note }: { name: string; value: number; of: 
 
 const pace = (g: api.Goal) => g.pace === 'reached' ? 'Meta cumplida.' : g.pace === 'open' ? `Faltan ${money(g.target - g.actual)}.` : g.pace === 'ahead' ? `Vas adelantado: a este ritmo cerrarías en ${money(g.projected)}.` : g.pace === 'close' ? `Vas casi al ritmo: cerrarías en ${money(g.projected)}.` : `Vas atrasado: a este ritmo cerrarías en ${money(g.projected)}.`;
 
-const ARC_R = 92, ARC = Math.PI * ARC_R;
-const arcPoint = (share: number, r: number) => [120 - r * Math.cos(Math.PI * share), 112 - r * Math.sin(Math.PI * share)] as const;
+const TICKS = 36;
+const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const days = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
+const goalName = (g: api.Goal) => g.period === 'month' ? `Meta de ${MONTHS[Number(g.from.slice(5, 7)) - 1]}` : g.period === 'year' ? `Meta de ${g.from.slice(0, 4)}` : 'Meta del día';
 
-/** The first goal as an arc: amber for what is sold, a dark tick where an even pace would be today. */
-function Gauge({ goal }: { goal: api.Goal }) {
+/** The first goal as an arc of marks: amber up to what is sold; the mark of an even pace today is darker. */
+function Gauge({ goal, today }: { goal: api.Goal; today: string }) {
 
     const share = goal.target ? Math.min(1, goal.actual / goal.target) : 0;
     const due = goal.target && goal.expected ? Math.min(1, goal.expected / goal.target) : null;
-    const [sx, sy] = arcPoint(0, ARC_R), [ex, ey] = arcPoint(1, ARC_R), path = `M${sx} ${sy} A${ARC_R} ${ARC_R} 0 0 1 ${ex} ${ey}`;
-    const tick = due === null ? null : [arcPoint(due, ARC_R - 15), arcPoint(due, ARC_R + 15)] as const;
+    const lit = Math.round(TICKS * share), dueTick = due === null ? -1 : Math.min(TICKS - 1, Math.round((TICKS - 1) * due));
+    const total = days(goal.from, goal.to), passed = Math.min(total, days(goal.from, today));
 
-    return <div className="gauge">
+    return <>
 
-        <svg viewBox="0 0 240 124" role="img" aria-label={`${PERIOD_NAME[goal.period]}: ${bps(goal.progressBps)} de ${money(goal.target)}`}>
+        <div className="gauge">
 
-            <path d={path} className="gauge-track" />
-            <path d={path} className="gauge-fill" style={{ strokeDasharray: ARC, strokeDashoffset: ARC * (1 - share) }} />
-            {tick && <line x1={tick[0][0]} y1={tick[0][1]} x2={tick[1][0]} y2={tick[1][1]} className="gauge-due" />}
+            <svg viewBox="0 0 200 112" className="goal-ticks" role="img" aria-label={`${goalName(goal)}: ${bps(goal.progressBps)} de ${money(goal.target)}`}>{Array.from({ length: TICKS }, (_, i) => {
 
-        </svg>
-        <div className="gauge-center"><b>{bps(goal.progressBps)}</b><small>{PERIOD_NAME[goal.period].toLowerCase()}</small></div>
-        {goal.pace !== 'open' && goal.pace !== 'reached' && goal.expected > 0 && <p className="gauge-pace"><Delta now={goal.actual} before={goal.expected} /><span>contra el ritmo parejo</span></p>}
+                const a = Math.PI - i / (TICKS - 1) * Math.PI, inner = i === dueTick ? 66 : 74;
 
-    </div>;
+                return <line key={i} x1={100 + inner * Math.cos(a)} y1={104 - inner * Math.sin(a)} x2={100 + 94 * Math.cos(a)} y2={104 - 94 * Math.sin(a)} stroke={i === dueTick ? 'var(--ink-2)' : i < lit ? 'var(--amber)' : 'var(--tick)'} />;
+
+            })}</svg>
+            <div className="gauge-center"><b>{bps(goal.progressBps)}</b></div>
+
+        </div>
+        <small className="gauge-sub">de la meta{goal.period !== 'day' && total > 1 ? ` · ${bps(Math.round(passed * 10_000 / total))} del ${goal.period === 'month' ? 'mes' : 'año'}` : ''}</small>
+        <div className="goal-foot"><span><b>{money(goal.actual)}</b> de {money(goal.target)}</span>{goal.pace !== 'open' && goal.pace !== 'reached' && goal.expected > 0 ? <Delta now={goal.actual} before={goal.expected} /> : goal.pace === 'reached' ? <span className="pill good">Cumplida</span> : null}</div>
+
+    </>;
 }
 
 export function GoalsBlock({ goals }: { goals: api.Goals | null }) {
 
     if (!goals) return <Block title="Metas" className="goals"><p className="quiet">No se pudieron leer las metas ahora. Se vuelve a intentar en un minuto.</p></Block>;
 
-    const first = goals.goals[0];
+    const [first, ...rest] = goals.goals;
 
-    return <Block title="Metas" className="goals">
+    if (!first) return <Block title="Metas" className="goals"><p className="quiet">Sin metas. El dueño las define en Ajustes.</p></Block>;
 
-        {first && <Gauge goal={first} />}
-        {goals.goals.length
-            ? <ol className="progress" aria-label="Avance de metas">{goals.goals.map((g, i) => <Progress key={i} name={`${PERIOD_NAME[g.period]}${g.branchName ? ` · ${g.branchName}` : ''}`} value={g.actual} of={g.target} note={<>{money(g.actual)} de {money(g.target)}. {pace(g)}</>} />)}</ol>
-            : <p className="quiet">Sin metas. El dueño las define en Ajustes.</p>}
+    const total = days(first.from, first.to);
+
+    return <Block title={first.branchName ? `${goalName(first)} · ${first.branchName}` : goalName(first)} className="goals" meta={first.period === 'day' ? undefined : `día ${Math.min(total, days(first.from, goals.today))} de ${total}`}>
+
+        <Gauge goal={first} today={goals.today} />
+        <p className="note">{pace(first)}{first.pace !== 'open' && first.pace !== 'reached' ? ' La píldora compara con el ritmo parejo.' : ''}</p>
+        {rest.length > 0 && <ol className="progress" aria-label="Avance de metas">{rest.map((g, i) => <Progress key={i} name={`${PERIOD_NAME[g.period]}${g.branchName ? ` · ${g.branchName}` : ''}`} value={g.actual} of={g.target} note={<>{money(g.actual)} de {money(g.target)}. {pace(g)}</>} />)}</ol>}
 
     </Block>;
 }
@@ -101,6 +111,28 @@ export function NowMore({ rows }: { rows: api.Summary['branches'] }) {
 
 const TREND_BY: { id: api.Trend['by']; label: string }[] = [{ id: 'week', label: 'Semanas' }, { id: 'month', label: 'Meses' }, { id: 'year', label: 'Años' }];
 const periodName = (key: string, by: api.Trend['by']) => by === 'year' ? key : by === 'month' ? new Date(key + '-15T12:00:00Z').toLocaleDateString('es-MX', { month: 'long', year: 'numeric', timeZone: 'UTC' }) : `Semana del ${shortDate(key)}`;
+const periodTick = (key: string, by: api.Trend['by']) => by === 'year' ? key : by === 'month' ? new Date(key + '-15T12:00:00Z').toLocaleDateString('es-MX', { month: 'short', timeZone: 'UTC' }).replace('.', '') : shortDate(key);
+
+/** Columns of the graphite card: this stretch in amber, the earlier one as an outline behind. */
+export function Columns({ columns, shown = money, label }: { columns: { key: string; tick: string; name: string; value: number; was?: number; open?: boolean; part?: number; dim?: boolean }[]; shown?: (v: number) => string; label: string }) {
+
+    const top = Math.max(1, ...columns.map(c => Math.max(c.value, c.was ?? 0)));
+    const every = Math.ceil(columns.length / 12);
+
+    if (!columns.some(c => c.value || c.was)) return <div className="chart-empty push"><span /><span /><span /><p>Sin datos para la gráfica en este tramo.</p></div>;
+
+    return <figure className="hours push" aria-label={label}>
+
+        <div className="hours-plot">{columns.map(c => <button key={c.key} type="button" className={c.open ? 'now' : undefined} aria-label={`${c.name}: ${shown(c.value)}${c.was !== undefined ? `, antes ${shown(c.was)}` : ''}`}>
+
+            {c.was !== undefined && c.was > 0 && <span className="was-bar" style={{ height: `${c.was / top * 100}%` }} />}
+            <span className={c.dim ? 'bar dim' : 'bar mark'} style={{ height: `${Math.max(c.value / top * 100, c.value ? 2 : 0)}%` }}>{c.part ? <span className="part" style={{ height: `${Math.min(100, c.part / Math.max(1, c.value) * 100)}%` }} /> : null}</span>
+
+        </button>)}</div>
+        <div className="hours-axis" aria-hidden="true">{columns.map((c, i) => <span key={c.key}>{i % every === 0 ? c.tick : ''}</span>)}</div>
+
+    </figure>;
+}
 
 export function TrendView({ view, data, by, choose }: Of<'trend'> & { by: api.Trend['by']; choose: (by: api.Trend['by']) => void }) {
 
@@ -109,22 +141,51 @@ export function TrendView({ view, data, by, choose }: Of<'trend'> & { by: api.Tr
     if (allLite(view.scope, trend.lite)) return <Locked title="Tendencia" what="Ventas por semana, mes y año contra el año anterior." />;
 
     const growth = trend.lastYearTotal ? Math.round((trend.total - trend.lastYearTotal) * 10_000 / trend.lastYearTotal) : null;
+    const best = [...trend.periods].sort((a, b) => b.net - a.net)[0];
+    const tickets = sum(trend.periods, p => p.tickets);
+    const unit = by === 'week' ? 'semana' : by === 'month' ? 'mes' : 'año';
 
     return <main className="report">
 
-        <Headline view={{ ...view, span: { from: trend.from, to: trend.to } }} title={`Ventas por ${by === 'week' ? 'semana' : by === 'month' ? 'mes' : 'año'}`} figure={money(trend.total)} outOfRange={trend.outOfRange}>
+        <HeroRow hero={<Headline view={{ ...view, span: { from: trend.from, to: trend.to } }} title={`Ventas por ${unit}`} figure={money(trend.total)} outOfRange={trend.outOfRange}>
 
-            <div className="periods inline" role="group" aria-label="Agrupar por">{TREND_BY.map(b => <button key={b.id} aria-pressed={by === b.id} onClick={() => choose(b.id)}>{b.label}</button>)}</div>
-            {growth !== null ? <p className="versus"><span>{growth >= 0 ? `${bps(growth)} más` : `${bps(-growth)} menos`} que el mismo tramo del año pasado: {money(trend.lastYearTotal)}</span></p> : <p className="note">Todavía no hay ventas del año pasado para comparar.</p>}
+            <div className="hero-top">
+
+                {growth !== null ? <p className="versus"><Delta now={trend.total} before={trend.lastYearTotal} /><span>contra {money(trend.lastYearTotal)} del mismo tramo del año pasado</span></p> : <p className="hero-sub">Todavía no hay ventas del año pasado para comparar.</p>}
+                <div className="metric-tabs" role="group" aria-label="Agrupar por">{TREND_BY.map(b => <button key={b.id} aria-pressed={by === b.id} onClick={() => choose(b.id)}>{b.label}</button>)}</div>
+
+            </div>
             <ProNote branches={view.scope} lite={trend.lite} locked="" />
+            {trend.hasLastYear && <p className="hero-line"><span /><span className="legend"><span><i className="a" />Este año</span><span><i className="o" />Año anterior</span></span></p>}
+            <Columns label="Ventas por periodo" columns={trend.periods.map((p, i) => ({ key: p.key, tick: periodTick(p.key, by), name: periodName(p.key, by), value: p.net, was: trend.hasLastYear ? p.lastYearNet : undefined, open: i === trend.periods.length - 1 && p.to >= view.today, dim: p !== best }))} />
 
-        </Headline>
-        <div className="col">
+        </Headline>} stats={<>
 
-            <Block title={by === 'week' ? 'Últimas 12 semanas' : by === 'month' ? 'Últimos 12 meses' : 'Este año'}>{<Rows label="Ventas por periodo" empty="Sin ventas en este tramo." rows={[...trend.periods].reverse().map(p => ({ key: p.key, name: periodName(p.key, by), value: p.net, note: `${plural(p.tickets, 'cuenta', 'cuentas')} · ticket ${money(p.averageTicket)}${p.growthBps !== null ? ` · ${p.growthBps >= 0 ? '+' : '−'}${bps(Math.abs(p.growthBps))} contra ${money(p.lastYearNet)} del año pasado` : ''}` }))} />
-}</Block>
+            <StatCard label={`Mejor ${unit}`} value={best ? periodName(best.key, by) : '—'} Icon={CalendarDays}>{best && <>{best.growthBps !== null && <Delta now={best.net} before={best.lastYearNet} percent />}<span>{money(best.net)}</span></>}</StatCard>
+            <StatCard label="Ticket promedio" value={tickets ? money(Math.round(trend.total / tickets)) : '—'} Icon={Tag}><span>{plural(tickets, 'cuenta', 'cuentas')} en el tramo</span></StatCard>
+            <StatCard label={`Cuentas por ${unit}`} value={trend.periods.length ? whole(Math.round(tickets / trend.periods.length)) : '—'} Icon={ReceiptText}><span>promedio</span></StatCard>
 
-        </div>
+        </>} />
+        <Block title={by === 'week' ? 'Semana por semana' : by === 'month' ? 'Mes por mes' : 'Año por año'} meta={trend.hasLastYear ? `contra el mismo ${unit} del año anterior` : undefined}>
+
+            {trend.periods.length ? <div className="scroll"><table className="table">
+
+                <thead><tr><th scope="col">{by === 'week' ? 'Semana' : by === 'month' ? 'Mes' : 'Año'}</th><th scope="col">Ventas</th>{trend.hasLastYear && <th scope="col">Año anterior</th>}{trend.hasLastYear && <th scope="col">Cambio</th>}<th scope="col">Cuentas</th><th scope="col">Ticket</th><th scope="col">Días con venta</th></tr></thead>
+                <tbody>{[...trend.periods].reverse().map(p => <tr key={p.key}>
+
+                    <td><b>{periodName(p.key, by)}</b></td>
+                    <td><b>{money(p.net)}</b></td>
+                    {trend.hasLastYear && <td className="quiet">{money(p.lastYearNet)}</td>}
+                    {trend.hasLastYear && <td>{p.growthBps !== null ? <Delta now={p.net} before={p.lastYearNet} percent /> : '—'}</td>}
+                    <td>{whole(p.tickets)}</td>
+                    <td>{money(p.averageTicket)}</td>
+                    <td>{whole(p.days)}</td>
+
+                </tr>)}</tbody>
+
+            </table></div> : <p className="quiet">Sin ventas en este tramo.</p>}
+
+        </Block>
 
     </main>;
 }
@@ -132,6 +193,7 @@ export function TrendView({ view, data, by, choose }: Of<'trend'> & { by: api.Tr
 // ---------- Forecast ----------
 
 const factorNote = (d: api.ForecastDay) => [d.trend !== 1 && `tendencia ×${d.trend.toLocaleString('es-MX')}`, d.holiday && `${d.holiday.name} ×${d.holiday.factor.toLocaleString('es-MX')}${d.holiday.learned ? ' (de tu año pasado)' : ''}`, d.weather?.wet && `lluvia ×${d.weather.factor.toLocaleString('es-MX')}`].filter(Boolean).join(' · ');
+const thousands = (cents: number) => `$${(cents / 100_000).toLocaleString('es-MX', { maximumFractionDigits: 1 })} mil`;
 
 export function ForecastView({ view, data }: Of<'forecast'>) {
 
@@ -139,42 +201,57 @@ export function ForecastView({ view, data }: Of<'forecast'>) {
 
     if (allLite(view.scope, forecast.lite)) return <Locked title="El pronóstico" what="Ventas y platillos de los próximos 7 días." />;
 
-    const next = forecast.days[0];
+    const { days } = forecast, total = sum(days, d => d.net);
+    const strongest = [...days].sort((a, b) => b.net - a.net)[0];
+    const top = Math.max(1, ...days.map(d => d.high));
     const thin = forecast.historyDays < 21;
+    const holiday = days.find(d => d.holiday);
 
     return <main className="report">
 
-        <section className="headline" aria-label="Pronóstico de mañana">
+        <HeroRow hero={<Headline view={view} title="Venta esperada" label={`Venta esperada · próximos ${plural(days.length, 'día', 'días')}`} figure={money(total)} outOfRange={[]}>
 
-            <h1>Pronóstico de mañana · {next ? dayName(next.date) : ''}</h1>
-            <p className="figure">{next ? money(next.net) : '—'}</p>
-            {next && <Facts items={[['Entre', `${money(next.low)} y ${money(next.high)}`], ['Cuentas', whole(next.tickets)], ['Error reciente', forecast.errorBps === null ? 'Sin medir' : bps(forecast.errorBps)]]} />}
-            <p className="note">Promedio del mismo día de la semana en las últimas 8 semanas, con la tendencia del último mes, los días festivos de México{forecast.weather?.used ? ' y el clima' : ''}. El error es cuánto se equivocó este cálculo en los últimos 14 días.</p>
-            {thin && <p className="plan-note">Hay {plural(forecast.historyDays, 'día', 'días')} de historia: el pronóstico mejora con 4 semanas o más.</p>}
+            <p className="versus"><span className="pill flat">entre {money(sum(days, d => d.low))} y {money(sum(days, d => d.high))}</span></p>
+            <p className="hero-sub">Con {plural(forecast.historyDays, 'día', 'días')} de historia{forecast.errorBps !== null ? ` · el pronóstico de los últimos 14 días falló por ${bps(forecast.errorBps)}` : ''}</p>
+            {thin && <p className="plan-note">El pronóstico mejora con 4 semanas de historia o más.</p>}
             <ProNote branches={view.scope} lite={forecast.lite} locked="" />
+            {days.length > 0 && <div className="push">
 
-        </section>
-        <div className="col">
+                <div className="fc" role="img" aria-label="Venta esperada por día">{days.map(d => <div className="c" key={d.date}>
 
-            <Block title="Próximos 7 días">
+                    <span className={d === strongest ? 'b top' : 'b'} style={{ height: `${d.net / top * 100}%` }} />
+                    <span className="r" style={{ bottom: `${d.low / top * 100}%`, height: `${(d.high - d.low) / top * 100}%` }} />
+                    <span className="v" style={{ bottom: `calc(${d.high / top * 100}% + 6px)` }}>{thousands(d.net)}</span>
 
-                <Rows label="Ventas esperadas" rows={forecast.days.map(d => ({ key: d.date, name: `${dayName(d.date)}${d.holiday ? ` · ${d.holiday.name}` : ''}`, value: d.net, note: <>{d.weather && <><CloudRain size={14} aria-hidden="true" />{`${d.weather.maxC.toLocaleString('es-MX')} °C · lluvia ${whole(d.weather.rainChance)} %`}</>}{` ${money(d.low)} a ${money(d.high)} · ${plural(d.tickets, 'cuenta', 'cuentas')}`}{factorNote(d) && ` · ${factorNote(d)}`}{d.weeks < 4 && ' · poca historia'}</> }))} />
-                <p className="note">{forecast.weather ? forecast.weather.used ? `Clima de ${forecast.weather.label}, de Open-Meteo. ${forecast.weather.learned ? 'El efecto de la lluvia sale de tus ventas en días lluviosos.' : 'Con lluvia se estima 7 % menos hasta tener al menos 3 días lluviosos propios.'}` : 'El clima se usa al ver una sola sucursal.' : 'Agrega la ubicación de la sucursal en Ajustes para usar el clima.'} Eventos cercanos y tráfico no se consideran: requieren servicios de pago.</p>
+                </div>)}</div>
+                <div className="fc-x">{days.map(d => <div key={d.date}><b>{dayName(d.date).split(' ').slice(0, 2).join(' ')}</b>{d.weather ? <small>{d.weather.wet ? <CloudRain size={11} aria-hidden="true" /> : <Sun size={11} aria-hidden="true" />}{d.weather.wet ? `Lluvia ${whole(d.weather.rainChance)} %` : `${whole(Math.round(d.weather.maxC))}°`}</small> : d.holiday ? <small>{d.holiday.name}</small> : null}</div>)}</div>
 
-            </Block>
+            </div>}
 
-        </div>
-        <div className="col">
+        </Headline>} stats={<>
 
-            <Block title="Qué preparar">
+            <StatCard label="Día más fuerte" value={strongest ? dayName(strongest.date).split(' ')[0]! : '—'} Icon={CalendarDays}>{strongest && <><span className="pill amber">{money(strongest.net)}</span><span>{plural(strongest.tickets, 'cuenta', 'cuentas')}</span></>}</StatCard>
+            <StatCard label="Efecto de la lluvia" value={forecast.weather?.used ? `${forecast.weather.rainFactor < 1 ? '−' : '+'}${bps(Math.round(Math.abs(1 - forecast.weather.rainFactor) * 10_000))}` : '—'} Icon={CloudRain}><span>{forecast.weather ? forecast.weather.used ? forecast.weather.learned ? 'aprendido de tu historia' : 'estimado hasta tener 3 días lluviosos' : 'al ver una sola sucursal' : 'agrega la ciudad en Ajustes'}</span></StatCard>
+            <StatCard label="Día festivo cercano" value={holiday ? dayName(holiday.date).split(' ').slice(1).join(' ') : 'Ninguno'} Icon={CalendarDays}>{holiday?.holiday && <><span className="pill amber">×{holiday.holiday.factor.toLocaleString('es-MX')}</span><span>{holiday.holiday.name}</span></>}</StatCard>
 
-                {forecast.products.length ? <div className="scroll"><table className="grid-table">
+        </>} />
+        <div className="row r21">
 
-                    <thead><tr><th scope="col">Platillo</th>{forecast.days.map(d => <th key={d.date} scope="col">{dayName(d.date).split(' ')[0]}</th>)}</tr></thead>
-                    <tbody>{forecast.products.map(p => <tr key={p.name}><td>{p.name}</td>{p.days.map(d => <td key={d.date}>{whole(d.units)}</td>)}</tr>)}</tbody>
+            <Block title="Platillos a preparar" meta="unidades esperadas por día">
+
+                {forecast.products.length ? <div className="scroll"><table className="table">
+
+                    <thead><tr><th scope="col">Platillo</th>{days.map(d => <th key={d.date} scope="col">{dayName(d.date).split(' ')[0]}</th>)}<th scope="col">Semana</th></tr></thead>
+                    <tbody>{forecast.products.map(p => <tr key={p.name}><td><b>{p.name}</b></td>{p.days.map(d => <td key={d.date}>{whole(d.units)}</td>)}<td><b>{whole(sum(p.days, d => d.units))}</b></td></tr>)}</tbody>
 
                 </table></div> : <p className="quiet">Sin ventas de productos en las últimas 4 semanas.</p>}
-                <p className="note">Unidades esperadas de los 10 más vendidos. Las existencias para cubrirlas se piden en la sucursal con «Sugerir compra».</p>
+                <p className="note">Los 10 más vendidos. Las existencias para cubrirlos se piden en la sucursal con «Sugerir compra».</p>
+
+            </Block>
+            <Block title="Día por día">
+
+                <Rows label="Ventas esperadas" rows={days.map(d => ({ key: d.date, name: `${dayName(d.date)}${d.holiday ? ` · ${d.holiday.name}` : ''}`, value: d.net, note: <>{`${money(d.low)} a ${money(d.high)} · ${plural(d.tickets, 'cuenta', 'cuentas')}`}{factorNote(d) && ` · ${factorNote(d)}`}{d.weeks < 4 && ' · poca historia'}</> }))} />
+                <p className="note">Promedio del mismo día de la semana en las últimas 8 semanas, con la tendencia del último mes, los días festivos de México{forecast.weather?.used ? ` y el clima de ${forecast.weather.label}` : ''}.</p>
 
             </Block>
 
@@ -190,6 +267,8 @@ function Statement({ lines }: { lines: [string, number, ('total' | 'sub')?][] })
     return <dl className="statement">{lines.map(([name, value, kind]) => <div key={name} className={kind}><dt>{name}</dt><dd>{money(value)}</dd></div>)}</dl>;
 }
 
+const short = (cents: number) => `${cents < 0 ? '−' : ''}$${Math.round(Math.abs(cents) / 100).toLocaleString('es-MX')}`;
+
 export function ProfitView({ view, data }: Of<'profit'>) {
 
     const { profit: p } = data;
@@ -197,36 +276,57 @@ export function ProfitView({ view, data }: Of<'profit'>) {
     if (allLite(view.scope, p.lite)) return <Locked title="La rentabilidad" what="Ventas menos costo de lo vendido, mermas, gastos, horas trabajadas y gastos fijos." />;
 
     const lines: [string, number, ('total' | 'sub')?][] = [['Ventas con IVA', p.net], ['IVA', -p.tax], ['Ventas sin IVA', p.sales, 'sub'], ['Costo de lo vendido (recetas)', -p.cogs], ['Merma y faltantes', -p.waste], ...p.expenses.map(e => [`Gasto · ${e.account}`, -e.amount] as [string, number]), ...(p.labor.counted ? [['Horas trabajadas (reloj checador)', -p.labor.cost] as [string, number]] : []), ...p.fixed.map(f => [`Fijo · ${f.name}`, -f.amount] as [string, number]), ['Ganancia estimada', p.profit, 'total']];
+    // The waterfall: sales, then each cost taken off where the one before left it, then what remains.
+    const steps: [string, number][] = [['Costo', p.cogs], ['Mermas', p.waste], ['Gastos', p.expensesTotal], ...(p.labor.counted ? [['Nómina', p.labor.cost] as [string, number]] : []), ['Fijos', p.fixedTotal]];
+    const top = Math.max(1, p.sales);
+    let level = p.sales;
+    const falls = steps.map(([name, value]) => { const from = level; level -= value; return { name, value, low: Math.max(0, Math.min(from, level)), high: Math.max(from, level) }; });
 
     return <main className="report">
 
-        <Headline view={view} title="Ganancia estimada" figure={money(p.profit)} outOfRange={p.outOfRange}>
+        <HeroRow hero={<Headline view={view} title="Ganancia estimada" figure={money(p.profit)} outOfRange={p.outOfRange}>
 
-            <Facts items={[['Margen', bps(p.marginBps)], ['Costo de alimentos', bps(p.foodCostBps)], ['Costo laboral', bps(p.laborBps)], ['Gastos fijos', money(p.fixedTotal)]]} />
+            <p className="versus"><span className={p.profit >= 0 ? 'pill good' : 'pill bad'}>margen {bps(p.marginBps)}</span></p>
+            <p className="hero-sub">Ventas sin IVA menos costo de lo vendido, mermas, gastos{p.labor.counted ? ', horas del reloj checador' : ''} y gastos fijos del periodo.</p>
             <ProNote branches={view.scope} lite={p.lite} locked="" />
+            <div className="push">
 
-        </Headline>
-        <div className="col">
+                <div className="fall" role="img" aria-label="De las ventas a la ganancia">
 
-            <Block title="Estado de resultados"><Statement lines={lines} /></Block>
+                    <div className="c sales"><span style={{ bottom: 0, height: `${p.sales / top * 100}%` }} /><em style={{ bottom: `calc(${p.sales / top * 100}% + 4px)` }}>{short(p.sales)}</em></div>
+                    {falls.map(f => <div className="c" key={f.name}><span style={{ bottom: `${f.low / top * 100}%`, height: `${Math.max(0.6, (f.high - f.low) / top * 100)}%` }} /><em style={{ bottom: `calc(${f.high / top * 100}% + 4px)` }}>{short(-f.value)}</em></div>)}
+                    <div className={p.profit >= 0 ? 'c total' : 'c total loss'}><span style={{ bottom: 0, height: `${Math.max(0.6, Math.abs(p.profit) / top * 100)}%` }} /><em style={{ bottom: `calc(${Math.abs(p.profit) / top * 100}% + 4px)` }}>{short(p.profit)}</em></div>
 
-        </div>
-        <div className="col">
+                </div>
+                <div className="fall-x" aria-hidden="true"><span>Ventas</span>{falls.map(f => <span key={f.name}>{f.name}</span>)}<span>Ganancia</span></div>
 
+            </div>
+
+        </Headline>} stats={<>
+
+            <StatCard label="Costo de lo vendido" value={bps(p.foodCostBps)} Icon={UtensilsCrossed}><span>{money(p.cogs)} con receta</span></StatCard>
+            <StatCard label="Costo laboral" value={p.labor.counted ? bps(p.laborBps) : '—'} Icon={Users}><span>{p.labor.counted ? hoursWorked(p.labor.minutes) : 'la nómina va en gastos'}</span></StatCard>
+            <StatCard label="Gastos fijos" value={money(p.fixedTotal)} Icon={CalendarDays}><span>repartidos por día</span></StatCard>
+
+        </>} />
+        <div className="row r3">
+
+            <Block title="Gastos registrados" meta="de caja y cuentas de gasto"><Rows label="Gastos" empty="Sin gastos registrados en este periodo." rows={p.expenses.map(e => ({ key: e.account, name: e.account, value: e.amount, note: plural(e.count, 'gasto', 'gastos') }))} /></Block>
+            <Block title="Gastos fijos" meta="en proporción al periodo"><Rows label="Gastos fijos" empty="Sin gastos fijos. Se escriben en Ajustes." rows={p.fixed.map(f => ({ key: `${f.licenseId}|${f.name}`, name: f.name, value: f.amount, note: `${view.me.branches.find(b => b.licenseId === f.licenseId)?.name ?? 'Todas'} · ${money(f.monthly)} al mes` }))} /></Block>
             <Block title="Cómo se calcula">
 
                 <ul className="plain">
 
                     <li><b>Costo de lo vendido</b><span>Sólo productos con receta.{p.revenueWithoutCost > 0 && ` ${money(p.revenueWithoutCost)} vendidos sin receta no restan costo: la ganancia real es menor.`}</span></li>
-                    <li><b>Gastos</b><span>Los registrados en la sucursal por cuenta de gasto y las salidas de caja. Las compras de insumos no entran aquí: entran por la receta al venderse.</span></li>
-                    <li><b>Horas trabajadas</b><span>{p.labor.counted ? `${hoursWorked(p.labor.minutes)} a sueldo por hora. Si también registras la nómina como gasto, desactívalo en Ajustes.` : 'No se restan: en Ajustes indicaste que la nómina ya va en los gastos.'}</span></li>
-                    <li><b>Gastos fijos</b><span>Los que escribes en Ajustes, repartidos por los días del periodo.</span></li>
+                    <li><b>Gastos</b><span>Los registrados en la sucursal y las salidas de caja. Las compras de insumos entran por la receta al venderse.</span></li>
+                    <li><b>Horas trabajadas</b><span>{p.labor.counted ? `${hoursWorked(p.labor.minutes)} a sueldo por hora. Si registras la nómina como gasto, desactívalo en Ajustes.` : 'No se restan: en Ajustes indicaste que la nómina ya va en los gastos.'}</span></li>
 
                 </ul>
 
             </Block>
 
         </div>
+        <Block title="Estado de resultados"><Statement lines={lines} /></Block>
 
     </main>;
 }
@@ -240,27 +340,52 @@ export function KitchenView({ view, data }: Of<'kitchen'>) {
     if (allLite(view.scope, k.lite)) return <Locked title="Cocina" what="Tiempos por platillo y estación, devoluciones y entregas a tiempo." />;
 
     const onTime = k.promises.length ? Math.round(sum(k.promises, p => p.count - p.late) * 10_000 / Math.max(1, sum(k.promises, p => p.count))) : null;
+    const stations = [...k.stations].sort((a, b) => b.averageSeconds - a.averageSeconds);
+    const slowest = Math.max(0, ...k.dishes.map(d => d.maxSeconds));
 
     return <main className="report">
 
-        <Headline view={view} title="Tiempo promedio en cocina" figure={k.totals.dishes ? duration(k.totals.averageSeconds) : '—'} outOfRange={k.outOfRange}>
+        <HeroRow hero={<Headline view={view} title="Tiempo de comanda a listo" figure={k.totals.dishes ? duration(k.totals.averageSeconds) : '—'} outOfRange={k.outOfRange}>
 
-            <Facts items={[['Platillos', whole(k.totals.dishes)], ['Devueltos', `${whole(k.totals.returns)} · ${bps(k.totals.returnBps)}`], ['Entregas a tiempo', onTime === null ? 'Sin datos' : bps(onTime)]]} />
-            <p className="note">Desde que la comanda llega a cocina hasta que el platillo está listo.</p>
+            <p className="hero-sub">{plural(k.totals.dishes, 'platillo', 'platillos')} · {plural(k.totals.returns, 'devolución', 'devoluciones')} ({bps(k.totals.returnBps)}){slowest ? ` · el más lento tardó ${duration(slowest)}` : ''}</p>
             <ProNote branches={view.scope} lite={k.lite} locked="" />
+            {stations.length > 0 ? <>
 
-        </Headline>
-        <div className="col">
+                <HeroBars label="Tiempo por estación" rows={stations.map(s => ({ key: s.station, name: s.station || 'Sin estación', value: s.averageSeconds, mark: s.maxSeconds, shown: duration(s.averageSeconds), note: `máx ${duration(s.maxSeconds)}` }))} />
+                <p className="hero-line"><span>Barra: promedio · raya roja: el más lento</span></p>
 
-            <Block title="Los más lentos">{<Rows label="Tiempo por platillo" empty="Sin platillos marcados como listos en este periodo." shown={duration} rows={k.dishes.slice(0, 10).map(d => ({ key: d.name, name: d.name, value: d.averageSeconds, note: `${d.station || 'Sin estación'} · ${plural(d.count, 'preparado', 'preparados')} · espera ${duration(d.averageWait)} · preparación ${duration(d.averagePrep)} · máximo ${duration(d.maxSeconds)}${d.averagePass !== null ? ` · al cliente en ${duration(d.averagePass)}` : ''}` }))} />}</Block>
-            {<Block title="Por estación"><Rows label="Tiempo por estación" empty="Sin estaciones medidas en este periodo." shown={duration} rows={k.stations.map(s => ({ key: s.station, name: s.station || 'Sin estación', value: s.averageSeconds, note: `${plural(s.count, 'platillo', 'platillos')} · máximo ${duration(s.maxSeconds)}` }))} /></Block>}
+            </> : <div className="chart-empty push"><span /><span /><p>Sin estaciones medidas en este periodo.</p></div>}
 
-        </div>
-        <div className="col">
+        </Headline>} stats={<>
 
-            <Block title="Devoluciones">{k.returns.length ? <ul className="plain">{k.returns.map(r => <li key={r.name}><b>{r.name}</b><span>{plural(r.count, 'devuelto', 'devueltos')} de {whole(r.sold)} vendidos ({bps(r.rateBps)}) · {r.reasons.map(x => `${x.label} ${x.count}`).join(', ')}</span></li>)}</ul> : <p className="quiet">Ningún platillo regresó a cocina en este periodo.</p>}</Block>
-            {<Block title="Motivos"><Rows label="Devoluciones por motivo" empty="Sin devoluciones en este periodo." shown={whole} rows={k.reasons.map(r => ({ key: r.reason, name: r.label, value: r.count }))} /></Block>}
-            <Block title="Tiempo prometido">{k.promises.length ? <ul className="plain">{k.promises.map(p => <li key={p.mode}><b>{modeLabel(p.mode)}: {bps(p.onTimeBps)} a tiempo</b><span>{plural(p.late, 'pedido tarde', 'pedidos tarde')} de {whole(p.count)} · se prometieron {duration(p.averagePromised)} y tomó {duration(p.averageActual)} en promedio</span></li>)}</ul> : <p className="quiet">Sin pedidos con hora prometida. La sucursal la registra al crear el pedido.</p>}<p className="note">A domicilio se mide la salida más el tiempo estimado de la ruta; la sucursal no sabe cuándo llegó.</p></Block>
+            <StatCard label="Devoluciones" value={whole(k.totals.returns)} Icon={Undo2}><span>{bps(k.totals.returnBps)} de lo servido</span></StatCard>
+            {k.promises.length ? k.promises.slice(0, 2).map(p => <StatCard key={p.mode} label={`${modeLabel(p.mode)} a tiempo`} value={bps(p.onTimeBps)} Icon={Clock}><span>prometido {duration(p.averagePromised)} · tomó {duration(p.averageActual)}</span></StatCard>) : <StatCard label="Entregas a tiempo" value={onTime === null ? '—' : bps(onTime)} Icon={Clock}><span>sin pedidos con hora prometida</span></StatCard>}
+            {k.promises.length < 2 && <StatCard label="Platillos" value={whole(k.totals.dishes)} Icon={UtensilsCrossed}><span>marcados como listos</span></StatCard>}
+
+        </>} />
+        <div className="row r21">
+
+            <Block title="Platillos" meta="de la comanda a la mesa">
+
+                {k.dishes.length ? <div className="scroll"><table className="table">
+
+                    <thead><tr><th scope="col">Platillo</th><th scope="col" className="left">Estación</th><th scope="col">Servidos</th><th scope="col">Espera</th><th scope="col">Preparación</th><th scope="col">Pase</th><th scope="col">Total</th></tr></thead>
+                    <tbody>{k.dishes.slice(0, 12).map(d => <tr key={d.name}><td><b>{d.name}</b></td><td className="left quiet">{d.station || 'Sin estación'}</td><td>{whole(d.count)}</td><td>{duration(d.averageWait)}</td><td>{duration(d.averagePrep)}</td><td>{d.averagePass === null ? '—' : duration(d.averagePass)}</td><td><b>{duration(d.averageSeconds)}</b></td></tr>)}</tbody>
+
+                </table></div> : <p className="quiet">Sin platillos marcados como listos en este periodo.</p>}
+
+            </Block>
+            <div className="col">
+
+                <Block title="Devoluciones" meta="por motivo">
+
+                    <Rows label="Devoluciones por motivo" empty="Ningún platillo regresó a cocina en este periodo." shown={whole} rows={k.reasons.map(r => ({ key: r.reason, name: r.label, value: r.count }))} />
+                    {k.returns.length > 0 && <ul className="plain" style={{ marginTop: 12 }}>{k.returns.map(r => <li key={r.name}><b>{r.name}</b><span>{plural(r.count, 'devuelto', 'devueltos')} de {whole(r.sold)} ({bps(r.rateBps)}) · {r.reasons.map(x => `${x.label} ${x.count}`).join(', ')}</span></li>)}</ul>}
+
+                </Block>
+                <Block title="Tiempo prometido">{k.promises.length ? <ul className="plain">{k.promises.map(p => <li key={p.mode}><b>{modeLabel(p.mode)}: {bps(p.onTimeBps)} a tiempo</b><span>{plural(p.late, 'pedido tarde', 'pedidos tarde')} de {whole(p.count)} · se prometieron {duration(p.averagePromised)} y tomó {duration(p.averageActual)}</span></li>)}</ul> : <p className="quiet">Sin pedidos con hora prometida. La sucursal la registra al crear el pedido.</p>}<p className="note">A domicilio se mide la salida más el tiempo estimado de la ruta.</p></Block>
+
+            </div>
 
         </div>
 
@@ -270,6 +395,7 @@ export function KitchenView({ view, data }: Of<'kitchen'>) {
 // ---------- Customers ----------
 
 const stars = (value: number) => `${tenths(value)} de 5`;
+const starRow = (tenthsValue: number) => '★★★★★'.slice(0, Math.round(tenthsValue / 10)) + '☆☆☆☆☆'.slice(0, 5 - Math.round(tenthsValue / 10));
 
 export function CustomersView({ view, data }: Of<'customers'>) {
 
@@ -278,37 +404,46 @@ export function CustomersView({ view, data }: Of<'customers'>) {
     if (allLite(view.scope, c.lite)) return <Locked title="Clientes" what="Frecuencia, valor de vida y calificaciones de los clientes." />;
 
     const { known, period, reviews } = c;
+    const returning = known.active90 ? Math.round(known.repeat90 * 10_000 / known.active90) : null;
 
     return <main className="report">
 
-        <Headline view={view} title="Clientes identificados" figure={whole(known.identified)} outOfRange={c.outOfRange}>
+        <HeroRow hero={<Headline view={view} title="Clientes que regresan" label="Clientes que regresan · últimos 90 días" figure={returning === null ? '—' : bps(returning)} outOfRange={c.outOfRange}>
 
-            <Facts items={[['Regresan', known.active90 ? `${whole(known.repeat90)} de ${whole(known.active90)}` : '—'], ['Días entre visitas', known.averageGapDays ? whole(known.averageGapDays) : '—'], ['Valor de vida', money(known.lifetimeAverage)], ['Visitas por cliente', tenths(known.visitsAverageTenths)]]} />
-            <p className="note">Clientes con nombre en la sucursal: domicilio, para llevar y lealtad. «Regresan» cuenta a quienes vinieron más de una vez en 90 días. El panel recibe sólo cifras, nunca nombres ni teléfonos.</p>
+            <p className="hero-sub">{known.active90 ? <><b>{whole(known.repeat90)} de {whole(known.active90)}</b> clientes activos vinieron más de una vez{known.averageGapDays ? <> · vuelven cada <b>{plural(known.averageGapDays, 'día', 'días')}</b> en promedio</> : ''}</> : 'Todavía no hay clientes identificados en los últimos 90 días.'}</p>
             <ProNote branches={view.scope} lite={c.lite} locked="" />
+            <div className="push">
 
-        </Headline>
-        <div className="col">
+                <div className="kpis">
 
-            <Block title="En este periodo"><Facts items={[['Cuentas con cliente', `${whole(period.identifiedTickets)} · ${bps(period.identifiedBps)}`], ['Primera visita', whole(period.first)], ['Regresaron', whole(period.repeat)], ['Ticket', money(period.averageIdentified)]]} /></Block>
-            <Block title="Clientes frecuentes">
+                    <div><small>Clientes conocidos</small><b>{whole(known.identified)}</b><span>{whole(known.active90)} activos</span></div>
+                    <div><small>Valor de vida</small><b>{money(known.lifetimeAverage)}</b><span>{tenths(known.visitsAverageTenths)} visitas</span></div>
+                    <div><small>Frecuentes</small><b>{whole(known.vip)}</b><span>{plural(known.vipLapsed, 'sin volver', 'sin volver')} en {known.lapsedDays} días</span></div>
+                    <div><small>Ticket identificado</small><b>{money(period.averageIdentified)}</b><span>en este periodo</span></div>
 
-                <Facts items={[['Frecuentes', whole(known.vip)], [`Sin volver en ${known.lapsedDays} días`, whole(known.vipLapsed)]]} />
-                <p className="note">Frecuentes es el 10 % que más ha gastado.{known.vipLapsed > 0 && ' Búscalos desde Clientes en la sucursal: ahí están sus datos.'}</p>
+                </div>
+                <div className="stackbar" aria-hidden="true"><span style={{ width: `${period.identifiedBps / 100}%`, background: 'var(--amber)' }} /></div>
+                <p className="hero-line" style={{ marginTop: 0 }}><span><b>{whole(period.identifiedTickets)} de {whole(period.tickets)}</b> cuentas con cliente identificado · {plural(period.first, 'primera vez', 'primeras veces')} · {whole(period.repeat)} regresan</span></p>
+
+            </div>
+
+        </Headline>} stats={<>
+
+            <StatCard label="Calificación general" value={reviews.count ? tenths(reviews.overallTenths) : '—'} Icon={Star}>{reviews.count > 0 && <><span className="stars" aria-hidden="true">{starRow(reviews.overallTenths)}</span><span>{plural(reviews.count, 'opinión', 'opiniones')}</span></>}</StatCard>
+            <StatCard label="Comida" value={reviews.count ? tenths(reviews.foodTenths) : '—'} Icon={UtensilsCrossed}><span>de 5</span></StatCard>
+            <StatCard label="Servicio" value={reviews.count ? tenths(reviews.serviceTenths) : '—'} Icon={Users}><span>{reviews.low ? `${plural(reviews.low, 'opinión baja', 'opiniones bajas')}` : 'de 5'}</span></StatCard>
+
+        </>} />
+        <div className="row r3">
+
+            <Block title="Mejor calificados" meta="platillos"><Rows label="Mejor calificados" empty="Sin calificaciones en este periodo." shown={v => stars(v)} rows={c.best.map(d => ({ key: d.name, name: d.name, value: d.averageTenths, note: plural(d.count, 'opinión', 'opiniones') }))} /></Block>
+            <Block title="Peor calificados" meta="platillos"><Rows label="Peor calificados" empty="Sin calificaciones en este periodo." shown={v => stars(v)} rows={c.worst.map(d => ({ key: d.name, name: d.name, value: d.averageTenths, note: plural(d.count, 'opinión', 'opiniones') }))} /></Block>
+            <Block title="Frecuentes que no han vuelto" meta="sólo cifras">
+
+                <Facts items={[[`Sin venir en ${known.lapsedDays} días`, whole(known.vipLapsed)], ['Frecuentes', whole(known.vip)]]} />
+                <p className="note">Frecuentes es el 10 % que más ha gastado. El panel recibe sólo cifras, nunca nombres ni teléfonos.{known.vipLapsed > 0 && ' Búscalos desde Clientes en la sucursal: ahí están sus datos.'}</p>
 
             </Block>
-
-        </div>
-        <div className="col">
-
-            <Block title="Calificaciones">
-
-                {reviews.count ? <Facts items={[['General', stars(reviews.overallTenths)], ['Comida', stars(reviews.foodTenths)], ['Servicio', stars(reviews.serviceTenths)], ['Bajas (1 o 2)', whole(reviews.low)]]} /> : <p className="quiet">Sin calificaciones en este periodo.</p>}
-                <p className="note">Las que dejan los clientes en la sucursal. Google Maps y TripAdvisor no están conectados.</p>
-
-            </Block>
-            {<Block title="Platillos mejor calificados"><Rows label="Mejor calificados" empty="Sin calificaciones en este periodo." shown={v => stars(v)} rows={c.best.map(d => ({ key: d.name, name: d.name, value: d.averageTenths, note: plural(d.count, 'calificación', 'calificaciones') }))} /></Block>}
-            {<Block title="Platillos peor calificados"><Rows label="Peor calificados" empty="Sin calificaciones en este periodo." shown={v => stars(v)} rows={c.worst.map(d => ({ key: d.name, name: d.name, value: d.averageTenths, note: `${plural(d.count, 'calificación', 'calificaciones')} de las cuentas que lo pidieron` }))} /></Block>}
 
         </div>
 
@@ -319,92 +454,156 @@ export function CustomersView({ view, data }: Of<'customers'>) {
 
 const LEVEL = { high: { label: 'Urgente', Icon: TriangleAlert }, medium: { label: 'Atender', Icon: CircleAlert }, info: { label: 'Para saber', Icon: Info } } as const;
 
+function AlertItem({ a }: { a: api.Alert }) {
+
+    const { Icon } = LEVEL[a.level];
+
+    return <li className={`alert ${a.level}`}>
+
+        <span className="alert-icon" aria-hidden="true"><Icon size={16} /></span>
+        <div><b>{a.title}</b><p>{a.detail}</p></div>
+        <span className="tag">{a.area}{a.branchName ? ` · ${a.branchName}` : ''}</span>
+
+    </li>;
+}
+
 export function AlertsView({ data }: Of<'alerts'>) {
 
     const { alerts } = data.alerts;
 
     if (!alerts.length) return <main className="empty"><h2>Sin alertas</h2><p>Nada pide tu atención en este momento.</p></main>;
 
-    return <main className="report single">
+    const urgent = alerts.filter(a => a.level !== 'info'), info = alerts.filter(a => a.level === 'info');
+    const areas = [...alerts.reduce((all, a) => all.set(a.area, (all.get(a.area) ?? 0) + 1), new Map<string, number>())].sort((a, b) => b[1] - a[1]);
 
-        <section className="headline" aria-label="Alertas"><h1>Alertas de hoy</h1><p className="figure">{whole(alerts.length)}</p></section>
-        <ul className="plain alerts">{alerts.map((a, i) => { const { label, Icon } = LEVEL[a.level]; return <li key={i} className={`alert ${a.level}`}>
+    return <main className="report">
 
-            <b><Icon size={16} aria-hidden="true" />{a.title}<span className="tag">{label}</span><span className="tag">{a.area}</span>{a.branchName && <span className="tag">{a.branchName}</span>}</b>
-            <span>{a.detail}</span>
+        <div className="row r21">
 
-        </li>; })}</ul>
+            <div className="col">
+
+                {urgent.length > 0 && <Block title="Por atender" meta={whole(urgent.length)}><ul className="alert-list">{urgent.map((a, i) => <AlertItem a={a} key={i} />)}</ul></Block>}
+                {info.length > 0 && <Block title="Para tu información" meta={whole(info.length)}><ul className="alert-list">{info.map((a, i) => <AlertItem a={a} key={i} />)}</ul></Block>}
+
+            </div>
+            <Block title="Por área">
+
+                <Rows label="Alertas por área" shown={whole} rows={areas.map(([area, count]) => ({ key: area, name: area, value: count }))} />
+                <p className="note">Inventario y caducidad, conexión de sucursales, costos que suben, caja, personal y metas. Se revisan en cada actualización.</p>
+
+            </Block>
+
+        </div>
 
     </main>;
 }
 
 // ---------- Products: menu engineering ----------
 
-const CLASSES: { id: api.MenuClass; name: string }[] = [{ id: 'star', name: 'Estrellas' }, { id: 'plowhorse', name: 'Caballos de batalla' }, { id: 'puzzle', name: 'Enigmas' }, { id: 'dog', name: 'Perros' }];
+const CLASSES: { id: api.MenuClass; name: string; hint: string }[] = [
+    { id: 'star', name: 'Estrellas', hint: 'Se piden mucho y dejan buen margen. Cuídalas.' },
+    { id: 'plowhorse', name: 'Caballos de batalla', hint: 'Se piden mucho y dejan poco. Sube el precio poco a poco o baja el costo.' },
+    { id: 'puzzle', name: 'Enigmas', hint: 'Buen margen, poca venta. Recomiéndalos o muévelos a un lugar visible.' },
+    { id: 'dog', name: 'Para revisar', hint: 'Poca venta y poco margen. Considera quitarlos o rehacerlos.' }
+];
+const branchName = (view: View, name?: string) => view.scope.length > 1 && name ? `${name} · ` : '';
 
-export function MenuBlocks({ view, menu }: { view: View; menu: api.Menu }) {
+export function MenuQuad({ menu }: { menu: api.Menu }) {
 
-    const branch = (_licenseId: string, name?: string) => view.scope.length > 1 && name ? `${name} · ` : '';
-    const priced = menu.items.filter(i => i.suggestedPrice !== null).sort((a, b) => b.foodCostBps - a.foodCostBps);
+    return <Block title="Ingeniería de menú" meta="popularidad contra margen">
+
+        {menu.items.length ? <div className="quad">{CLASSES.map(c => { const own = menu.items.filter(i => i.class === c.id); return <div key={c.id} className={c.id === 'star' ? 'star' : undefined}>
+
+            <h3>{c.name} <span>{whole(own.length)}</span></h3>
+            <p>{c.hint}</p>
+            {own.length ? <ul>{own.slice(0, 3).map(i => <li key={`${i.category}|${i.name}`}><span>{i.name}</span><span>{money(i.unitMargin)} c/u</span></li>)}</ul> : <p>Ninguno.</p>}
+
+        </div>; })}</div> : <p className="quiet">Hace falta al menos un platillo con receta para clasificar el menú.</p>}
+        {menu.items.length > 0 && <p className="note">Popular: se vende al menos el 70 % de lo que le tocaría ({bps(menu.thresholds.popularShareBps)} de las unidades). Rentable: deja al menos {money(menu.thresholds.averageMargin)} por unidad. Sólo platillos con receta.</p>}
+        {menu.uncosted.length > 0 && <p className="note">Sin receta, fuera de la clasificación: {menu.uncosted.slice(0, 6).map(u => u.name).join(', ')}{menu.uncosted.length > 6 ? ` y ${menu.uncosted.length - 6} más` : ''}.</p>}
+
+    </Block>;
+}
+
+export function PriceBlock({ menu }: { menu: api.Menu }) {
+
+    const items = [...menu.items].sort((a, b) => (b.suggestedPrice === null ? 0 : 1) - (a.suggestedPrice === null ? 0 : 1) || b.foodCostBps - a.foodCostBps).slice(0, 6);
+
+    return <Block title="Precio sugerido" meta={`para llegar al ${bps(menu.foodCostTargetBps)} de costo`}>
+
+        {items.length ? <div className="scroll"><table className="table">
+
+            <thead><tr><th scope="col">Producto</th><th scope="col">Costo</th><th scope="col">Precio</th><th scope="col">Sugerido</th></tr></thead>
+            <tbody>{items.map(i => <tr key={`${i.category}|${i.name}`}>
+
+                <td><b>{i.name}</b><small>{i.category} · {plural(i.quantity, 'vendido', 'vendidos')}</small></td>
+                <td>{money(Math.round(i.cost / Math.max(1, i.quantity)))}</td>
+                <td>{money(i.price)}</td>
+                <td>{i.suggestedPrice === null ? <span className="quiet">En meta</span> : <><b>{money(i.suggestedPrice)}</b> <span className="pill amber">+{bps(Math.round((i.suggestedPrice - i.price) * 10_000 / Math.max(1, i.price)))}</span></>}</td>
+
+            </tr>)}</tbody>
+
+        </table></div> : <p className="quiet">Sin platillos con receta en este periodo.</p>}
+        <p className="note">Sugerencias: el precio se cambia en la sucursal. Precio promedio cobrado, con IVA.</p>
+
+    </Block>;
+}
+
+export function CostsBlock({ view, menu }: { view: View; menu: api.Menu }) {
+
+    return <Block title="Costos que subieron" meta="contra la compra anterior">
+
+        {menu.costAlerts.length ? <ul className="plain">{menu.costAlerts.map(a => <li key={`${a.licenseId}|${a.ingredientId}`}><b>{a.name} <span className="pill bad">+{bps(a.changeBps)}</span></b><span>{branchName(view, a.branchName)}{a.products.length ? `afecta ${a.products.map(p => p.name).join(', ')}` : 'ningún platillo con receta lo usa'}</span></li>)}</ul> : <p className="quiet">Ninguna compra reciente subió 10 % o más contra la anterior.</p>}
+
+    </Block>;
+}
+
+export function ExpiringBlock({ view, menu }: { view: View; menu: api.Menu }) {
+
+    return <Block title="Lotes por caducar" meta="próximos 3 días">
+
+        {menu.expiring.length ? <ul className="plain">{menu.expiring.map(e => <li key={`${e.licenseId}|${e.ingredientId}|${e.expiresOn}`}><b><i className={e.days <= 0 ? 'dot r' : e.days === 1 ? 'dot a' : 'dot'} aria-hidden="true" />{e.name}: {e.days < 0 ? 'ya caducó' : e.days === 0 ? 'caduca hoy' : `caduca en ${plural(e.days, 'día', 'días')}`}</b><span>{branchName(view, e.branchName)}{money(e.cost)} en existencia.{e.products.length ? ` Promociona ${e.products.join(', ')}.` : ''}</span></li>)}</ul> : <p className="quiet">Ningún lote con fecha de caducidad vence en los próximos 3 días.</p>}
+
+    </Block>;
+}
+
+export function MixBlock({ menu }: { menu: api.Menu }) {
+
     const mix = sum(menu.kinds, k => k.revenue);
+
+    return <Block title="Mix de consumo"><Rows label="Ventas por tipo" empty="Sin ventas por tipo en este periodo." rows={menu.kinds.map(k => ({ key: k.kind, name: kindLabel(k.kind), value: k.revenue, note: `${plural(k.quantity, 'unidad', 'unidades')} · ${bps(mix ? Math.round(k.revenue * 10_000 / mix) : 0)}` }))} />{menu.kinds.some(k => !k.kind) && <p className="note">Clasifica las categorías en la sucursal (Catálogo › Editar categorías) para separar comida, bebidas y alcohol.</p>}</Block>;
+}
+
+export function PromoBlock({ menu }: { menu: api.Menu }) {
+
+    return <Block title="Cuándo promocionar">
+
+        {menu.slowDays.length || menu.peakHours.length ? <ul className="plain">
+
+            {menu.slowDays.map(d => <li key={d.weekday}><b>Los {WEEKDAYS[d.weekday]} venden {bps(d.belowBps)} menos que el promedio</b><span>{money(d.average)} por día. Una promoción ese día llena mesas que de otro modo quedan vacías.</span></li>)}
+            {menu.peakHours.slice(0, 3).map(h => <li key={h.hour}><b>A las {hourLabel(h.hour)} se vende {bps(h.aboveBps)} más que el promedio</b><span>No descuentes en ese horario: ya se llena.</span></li>)}
+
+        </ul> : <p className="quiet">Sin días flojos ni horas pico marcadas en este periodo.</p>}
+
+    </Block>;
+}
+
+// ---------- Staff: labour, schedule and turnover ----------
+
+/** Sales by hour with, at the foot of each bar, what the people on the clock cost in that hour. */
+export function LaborChart({ team }: { team: api.Team }) {
+
+    const hours = [...team.labor.byHour].sort((a, b) => a.hour - b.hour);
+
+    if (!hours.length) return null;
 
     return <>
 
-        <div className="col">
-
-            <Block title="Ingeniería de menú">
-
-                {menu.items.length ? CLASSES.map(c => { const own = menu.items.filter(i => i.class === c.id); return own.length ? <div className="menu-class" key={c.id}>
-
-                    <h3>{c.name} <span className="tag">{own.length}</span></h3>
-                    <p className="note">{own[0]!.advice}</p>
-                    <Rows label={c.name} rows={own.map(i => ({ key: `${i.category}|${i.name}`, name: i.name, value: i.revenue, note: `${plural(i.quantity, 'vendido', 'vendidos')} · margen ${money(i.unitMargin)} por unidad · costo ${bps(i.foodCostBps)}` }))} />
-
-                </div> : null; }) : <p className="quiet">Hace falta al menos un platillo con receta para clasificar el menú.</p>}
-                {menu.items.length > 0 && <p className="note">Popular: se vende al menos el 70 % de lo que le tocaría si todos se vendieran igual ({bps(menu.thresholds.popularShareBps)} de las unidades). Rentable: deja al menos el margen promedio, {money(menu.thresholds.averageMargin)} por unidad. Sólo entran platillos con receta.</p>}
-                {menu.uncosted.length > 0 && <p className="note">Sin receta, fuera de la clasificación: {menu.uncosted.slice(0, 6).map(u => u.name).join(', ')}{menu.uncosted.length > 6 ? ` y ${menu.uncosted.length - 6} más` : ''}.</p>}
-
-            </Block>
-            {priced.length > 0 && <Block title="Precio sugerido">
-
-                <ul className="plain">{priced.map(i => <li key={`${i.category}|${i.name}`}><b>{i.name}: de {money(i.price)} a {money(i.suggestedPrice!)}</b><span>Cuesta {bps(i.foodCostBps)} de su precio; tu meta es {bps(menu.foodCostTargetBps)}.</span></li>)}</ul>
-                <p className="note">Sugerencias: el precio se cambia en la sucursal. Precio promedio cobrado, con IVA.</p>
-
-            </Block>}
-
-        </div>
-        <div className="col">
-
-            {<Block title="Mix de consumo"><Rows label="Ventas por tipo" empty="Sin ventas por tipo en este periodo." rows={menu.kinds.map(k => ({ key: k.kind, name: kindLabel(k.kind), value: k.revenue, note: `${plural(k.quantity, 'unidad', 'unidades')} · ${bps(mix ? Math.round(k.revenue * 10_000 / mix) : 0)}` }))} />{menu.kinds.some(k => !k.kind) && <p className="note">Clasifica las categorías en la sucursal (Catálogo › Editar categorías) para separar comida, bebidas y alcohol.</p>}</Block>}
-            {(menu.slowDays.length > 0 || menu.peakHours.length > 0) && <Block title="Cuándo promocionar">
-
-                <ul className="plain">
-
-                    {menu.slowDays.map(d => <li key={d.weekday}><b>Los {WEEKDAYS[d.weekday]} venden {bps(d.belowBps)} menos que el promedio</b><span>{money(d.average)} por día. Una promoción ese día llena mesas que de otro modo quedan vacías.</span></li>)}
-                    {menu.peakHours.slice(0, 3).map(h => <li key={h.hour}><b>A las {hourLabel(h.hour)} se vende {bps(h.aboveBps)} más que el promedio</b><span>No descuentes en ese horario: ya se llena.</span></li>)}
-
-                </ul>
-
-            </Block>}
-            <Block title="Costos que subieron">
-
-                {menu.costAlerts.length ? <ul className="plain">{menu.costAlerts.map(a => <li key={`${a.licenseId}|${a.ingredientId}`}><b>{branch(a.licenseId, a.branchName)}{a.name} subió {bps(a.changeBps)}</b><span>{a.products.length ? a.products.map(p => `${p.name}: costo ${p.cost === null ? '—' : money(p.cost)} de ${money(p.price)}`).join(' · ') : 'Ningún platillo con receta lo usa.'}</span></li>)}</ul> : <p className="quiet">Ninguna compra reciente subió 10 % o más contra la anterior.</p>}
-                <p className="note">Compara cada compra recibida con la anterior del mismo insumo. El costo de las recetas se actualiza solo con lo que recibe la sucursal.</p>
-
-            </Block>
-            <Block title="Por caducar">
-
-                {menu.expiring.length ? <ul className="plain">{menu.expiring.map(e => <li key={`${e.licenseId}|${e.ingredientId}|${e.expiresOn}`}><b>{branch(e.licenseId, e.branchName)}{e.name}: {e.days < 0 ? 'ya caducó' : e.days === 0 ? 'caduca hoy' : `caduca en ${plural(e.days, 'día', 'días')}`}</b><span>{money(e.cost)} en existencia.{e.products.length ? ` Promociona ${e.products.join(', ')}.` : ''}</span></li>)}</ul> : <p className="quiet">Ningún lote con fecha de caducidad vence en los próximos 3 días.</p>}
-                <p className="note">Sólo los lotes a los que la sucursal les puso fecha de caducidad al recibirlos.</p>
-
-            </Block>
-
-        </div>
+        <p className="hero-line"><span>Venta por hora y, abajo, lo que costó quien estaba en turno</span><span className="legend"><span><i className="a" />Venta</span><span><i className="d" />Costo laboral</span></span></p>
+        <Columns label="Venta y costo laboral por hora" columns={hours.map(h => ({ key: String(h.hour), tick: String(h.hour).padStart(2, '0'), name: hourLabel(h.hour), value: h.net, part: h.cost }))} />
 
     </>;
 }
-
-// ---------- Staff: efficiency, labour and patterns ----------
 
 const SCHEDULE_HOURS = (rows: api.Team['schedule']) => [...new Set(rows.map(r => r.hour))].sort((a, b) => a - b);
 
@@ -414,58 +613,37 @@ export function TeamBlocks({ view, team }: { view: View; team: api.Team }) {
     const worked = team.staff.filter(s => s.minutes > 0 || s.people > 0);
     const over = team.labor.byHour.filter(h => h.laborBps > team.laborTargetBps && h.cost > 0);
     const hours = SCHEDULE_HOURS(team.schedule);
-    const owner = view.me.account.role === 'owner';
+    const most = Math.max(1, ...team.schedule.map(r => r.suggestedPeople));
 
     return <>
 
-        <div className="col">
+        <div className="row r21">
 
-            <Block title="Eficiencia">
+            <Block title="Personal sugerido para la próxima semana" meta={`para un costo laboral de ${bps(team.laborTargetBps)}`}>
 
-                {<Rows label="Eficiencia por persona" empty="Sin mesas ni horas registradas en este periodo." rows={worked.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.net, note: `${branch(s.licenseId)}${plural(s.tables, 'mesa', 'mesas')} · ${plural(s.people, 'comensal', 'comensales')} · ticket ${money(s.averageTicket)}${s.minutes ? ` · ${hoursWorked(s.minutes)} · ${s.salesPerHour === null ? '' : `${money(s.salesPerHour)} por hora`}` : ''}` }))} />}
-
-            </Block>
-            <Block title="Costo laboral">
-
-                <Facts items={[['Sobre ventas', team.labor.net ? bps(team.labor.laborBps) : '—'], ['Horas', hoursWorked(team.labor.minutes)], ['Costo', money(team.labor.cost)], ['En turno ahora', `${whole(team.labor.now.people)} · ${money(team.labor.now.hourlyCost)}/h`]]} />
-                {over.length > 0 && <p className="note">Horas sobre tu meta de {bps(team.laborTargetBps)}: {over.map(h => `${hourLabel(h.hour)} (${bps(h.laborBps)})`).join(', ')}. En esas horas sobra personal para lo que se vende.</p>}
-                {!team.labor.minutes && <p className="note">El costo laboral usa el reloj checador y el sueldo por hora de cada empleado en la sucursal.</p>}
-
-            </Block>
-            {hours.length > 0 && <Block title="Personal sugerido para la próxima semana">
-
-                <div className="scroll"><table className="grid-table">
+                {hours.length ? <div className="scroll"><table className="grid-table">
 
                     <thead><tr><th scope="col">Hora</th>{[1, 2, 3, 4, 5, 6, 0].map(d => <th key={d} scope="col">{WEEKDAYS[d]!.slice(0, 3)}</th>)}</tr></thead>
-                    <tbody>{hours.map(h => <tr key={h}><td>{hourLabel(h)}</td>{[1, 2, 3, 4, 5, 6, 0].map(d => { const cell = team.schedule.find(r => r.weekday === d && r.hour === h); return <td key={d} className={cell && cell.suggestedPeople < cell.currentPeople - 0.5 ? 'less' : cell && cell.suggestedPeople > cell.currentPeople + 0.5 ? 'more' : undefined} title={cell ? `Hoy en promedio ${cell.currentPeople.toLocaleString('es-MX')}; se esperan ${money(cell.expectedNet)}` : undefined}>{cell ? whole(cell.suggestedPeople) : ''}</td>; })}</tr>)}</tbody>
+                    <tbody>{hours.map(h => <tr key={h}><td>{hourLabel(h)}</td>{[1, 2, 3, 4, 5, 6, 0].map(d => { const cell = team.schedule.find(r => r.weekday === d && r.hour === h); return <td key={d} style={{ ['--heat' as string]: cell ? cell.suggestedPeople / most : 0 }} className={cell && cell.suggestedPeople < cell.currentPeople - 0.5 ? 'less' : cell && cell.suggestedPeople > cell.currentPeople + 0.5 ? 'more' : undefined} title={cell ? `Hoy en promedio ${cell.currentPeople.toLocaleString('es-MX')}; se esperan ${money(cell.expectedNet)}` : undefined}>{cell ? whole(cell.suggestedPeople) : ''}</td>; })}</tr>)}</tbody>
 
-                </table></div>
-                <p className="note">Personas por hora para que el costo laboral quede en {bps(team.laborTargetBps)}, con las ventas promedio de las últimas 8 semanas y el sueldo promedio de {money(team.averageWage)} por hora. En gris donde hoy hay más personal del sugerido; en negritas donde hay menos.</p>
-
-            </Block>}
-
-        </div>
-        <div className="col">
-
-            {team.tips.shares.length > 0 && <Block title="Propinas por horas trabajadas">
-
-                <Rows label="Reparto de propinas" rows={team.tips.shares.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.share, note: `${branch(s.licenseId)}${hoursWorked(s.minutes)}` }))} />
-                <p className="note">Reparto sugerido de {money(team.tips.total)} en proporción a las horas del reloj checador. El reparto real lo decide la sucursal.</p>
-
-            </Block>}
-            {<Block title="Repartidores"><Rows label="Ventas por repartidor" empty="Sin entregas a domicilio en este periodo." rows={team.couriers.map(c => ({ key: `${c.licenseId}|${c.courierId}`, name: c.name, value: c.net, note: `${branch(c.licenseId)}${plural(c.deliveries, 'entrega', 'entregas')}` }))} /></Block>}
-            <Block title="Rotación de personal">
-
-                <Facts items={[['Activos', whole(team.roster.active)], ['Altas en 12 meses', whole(team.roster.hires)], ['Bajas en 12 meses', whole(team.roster.exits)], ['Rotación anual', bps(team.roster.turnoverBps)]]} />
-                <p className="note">Bajas del año entre la plantilla promedio. Usa la fecha de ingreso y la desactivación de cada empleado en la sucursal.</p>
+                </table></div> : <p className="quiet">Hacen falta ventas de las últimas 8 semanas y sueldos por hora para sugerir personal.</p>}
+                {hours.length > 0 && <p className="note">Con las ventas promedio de las últimas 8 semanas y un sueldo promedio de {money(team.averageWage)} por hora. En gris donde hoy sobra personal; con borde donde falta.</p>}
+                {over.length > 0 && <p className="note">Horas sobre tu meta: {over.map(h => `${hourLabel(h.hour)} (${bps(h.laborBps)})`).join(', ')}.</p>}
 
             </Block>
-            {owner && <Block title="Para revisar">
+            <Block title="Rotación" meta="últimos 12 meses">
 
-                {team.anomalies.length ? <ul className="plain">{team.anomalies.map(a => <li key={`${a.licenseId}|${a.staffId}|${a.metric}`}><b>{a.name}: {whole(a.value)} {a.label}</b><span>{branch(a.licenseId)}Lo usual en su sucursal es {a.usual.toLocaleString('es-MX')}.{a.amount ? ` Suman ${money(a.amount)}.` : ''}</span></li>)}</ul> : <p className="quiet">Nadie se aparta de lo usual en cancelaciones, descuentos, reaperturas ni aperturas de cajón.</p>}
-                <p className="note">Al menos 3 y el doble de lo usual entre sus compañeros. No prueba nada: es para revisarlo con el gerente. Sólo lo ve el dueño.</p>
+                <Facts items={[['Activos', whole(team.roster.active)], ['Rotación', bps(team.roster.turnoverBps)], ['Altas', whole(team.roster.hires)], ['Bajas', whole(team.roster.exits)]]} />
+                <p className="note">Bajas del año entre la plantilla promedio, con la fecha de ingreso y la baja de cada empleado en la sucursal.</p>
 
-            </Block>}
+            </Block>
+
+        </div>
+        <div className="row r3">
+
+            <Block title="Eficiencia"><Rows label="Eficiencia por persona" empty="Sin mesas ni horas registradas en este periodo." rows={worked.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.net, note: `${branch(s.licenseId)}${plural(s.tables, 'mesa', 'mesas')} · ${plural(s.people, 'comensal', 'comensales')}${s.minutes ? ` · ${hoursWorked(s.minutes)}` : ''}` }))} /></Block>
+            <Block title="Propinas por horas trabajadas">{team.tips.shares.length ? <><Rows label="Reparto de propinas" rows={team.tips.shares.map(s => ({ key: `${s.licenseId}|${s.staffId}`, name: s.name, value: s.share, note: `${branch(s.licenseId)}${hoursWorked(s.minutes)}` }))} /><p className="note">Reparto sugerido de {money(team.tips.total)} según el reloj checador. El reparto real lo decide la sucursal.</p></> : <p className="quiet">Sin horas del reloj checador para repartir propinas.</p>}</Block>
+            <Block title="Repartidores"><Rows label="Ventas por repartidor" empty="Sin entregas a domicilio en este periodo." rows={team.couriers.map(c => ({ key: `${c.licenseId}|${c.courierId}`, name: c.name, value: c.net, note: `${branch(c.licenseId)}${plural(c.deliveries, 'entrega', 'entregas')}` }))} /></Block>
 
         </div>
 
