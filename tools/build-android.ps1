@@ -35,16 +35,9 @@ try{
         try{& .\gradlew.bat "assembleArm64$variant" -x "rustBuildArm64$variant";if($LASTEXITCODE){throw 'Falló Gradle.'}}finally{Pop-Location}
     }
     if($Release){
-        # Signed with the Culinary key (MesaNexoNativo/tools/New-SigningKeys.ps1), kept outside the repository.
-        $bt=Get-ChildItem (Join-Path $env:ANDROID_HOME 'build-tools') -Directory | Sort-Object Name -Descending | Select-Object -First 1
-        $keys=$Keys
+        # Signed with the Culinary Services key, rotated from the original one (MesaNexoNativo/tools/Sign-Apk.ps1).
         New-Item -ItemType Directory -Force 'dist-android' | Out-Null
-        $pass=(Get-Content (Join-Path $keys 'android.pass') -Raw).Trim()
         $unsigned=Get-ChildItem 'src-tauri/gen/android/app/build/outputs/apk' -Recurse -Filter '*release-unsigned.apk' | Select-Object -First 1
-        & (Join-Path $bt.FullName 'zipalign.exe') -f -p 4 $unsigned.FullName 'dist-android/aligned.apk'
-        & (Join-Path $bt.FullName 'apksigner.bat') sign --ks (Join-Path $keys 'culinary-android.jks') --ks-key-alias culinary --ks-pass "pass:$pass" --out 'dist-android/CulinaryDueno-arm64.apk' 'dist-android/aligned.apk'
-        if($LASTEXITCODE){throw 'No se pudo firmar el APK.'}
-        Remove-Item 'dist-android/aligned.apk'
-        "APK firmado: $(Resolve-Path 'dist-android/CulinaryDueno-arm64.apk')"
+        & (Join-Path (Split-Path $root -Parent) 'MesaNexoNativo/tools/Sign-Apk.ps1') $unsigned.FullName (Join-Path $root 'dist-android/CulinaryDueno-arm64.apk') -Directory $Keys
     } else { Get-ChildItem 'src-tauri/gen/android/app/build/outputs/apk' -Recurse -Filter *.apk | ForEach-Object { "APK: $($_.FullName)" } }
 }finally{Pop-Location}
